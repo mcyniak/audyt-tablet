@@ -79,7 +79,9 @@
     <section class="ekran" id="ekran-protokol" hidden>
       <div class="kontakt" id="kontakt"></div>
       <div class="uwaga" id="komunikat" role="status" hidden></div>
+      <div class="zdjecia" id="zdjecia"></div>
       <div class="strony" id="strony"></div>
+      <input type="file" id="wybierz-zdjecia" accept="image/*" multiple hidden>
 
       <div class="narzedzia" id="narzedzia" role="toolbar" aria-label="Narzędzia">
         <button type="button" class="kolor" data-narzedzie="pioro" data-kolor="#1a3d8f" aria-pressed="true" aria-label="Pióro niebieskie"><span style="--k:#1a3d8f"></span></button>
@@ -91,6 +93,7 @@
         <span class="separator"></span>
         <button type="button" class="narzedzie" id="tryb-palca" aria-pressed="false" aria-label="Pisanie palcem" title="Pisanie palcem (bez rysika)"><span data-ikona="dlon"></span></button>
         <button type="button" class="narzedzie" id="edytuj-dane" aria-label="Dane w protokole" title="Dane w protokole"><span data-ikona="dane"></span></button>
+        <button type="button" class="narzedzie" id="dodaj-zdjecia" aria-label="Dodaj zdjęcia" title="Dodaj zdjęcia"><span data-ikona="zdjecie"></span><span class="licznik" id="licznik-zdjec" hidden></span></button>
       </div>
     </section>
   </main>

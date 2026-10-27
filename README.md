@@ -57,9 +57,19 @@ INWESTYCJE_3/
 │       └── PV.pdf
 └── AUDYTY/                           ← gotowe protokoły (foldery zakładane same)
     └── <INWESTYCJA>/
-        ├── PC/<adres>_PC.pdf
-        └── PV/<adres>_PV.pdf
+        ├── PC/
+        │   └── <adres>/
+        │       ├── <adres>_PC.pdf
+        │       ├── <adres>_PC_zdjęcie 01.jpg
+        │       └── <adres>_PC_zdjęcie 02.jpg
+        └── PV/
+            └── <adres>/<adres>_PV.pdf
 ```
+
+Zdjęcia dodaje się w protokole (przycisk ze zdjęciem na pasku narzędzi albo
+kafelek „Dodaj”, wybór z galerii). Trzymane w tablecie do „Zapisz”, potem
+wysyłane do folderu adresu; JPEG do 4,5 MB bez zmian, większe zmniejszane
+do 3000 px (wysyłka jednym zapytaniem przyjmuje do 5 MB).
 
 Nazwy i wzorce są w `public/config.js`. Dla pomp wzór gruntowy/powietrzny wybiera
 kolumna „rodzaj pompy” z tabeli.

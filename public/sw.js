@@ -2,7 +2,7 @@
 // startowała w terenie bez internetu. Strategia: najpierw sieć (świeża
 // wersja po aktualizacji), przy braku sieci - kopia z pamięci.
 // Zmień WERSJA przy każdym wydaniu, żeby stare pliki zostały wyrzucone.
-const WERSJA = 'audyt-v5';
+const WERSJA = 'audyt-v6';
 const PLIKI = [
   './',
   'index.html',

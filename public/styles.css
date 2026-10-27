@@ -529,6 +529,53 @@ a.chip { color: var(--marka); }
 a.chip .ik { color: var(--marka); }
 .chip.cichy { background: transparent; box-shadow: none; color: var(--tekst-2); font-weight: 500; }
 
+/* Zdjęcia dołączone do protokołu - pasek miniatur nad stronami. */
+.zdjecia { display: flex; gap: 10px; padding: 0 0 14px; overflow-x: auto; scrollbar-width: none; }
+.zdjecia:empty { display: none; }
+
+.miniatura, .dodaj-zdjecie {
+  position: relative;
+  flex: none;
+  width: 96px;
+  height: 96px;
+  border-radius: 14px;
+}
+
+.miniatura { overflow: hidden; background: var(--powierzchnia); box-shadow: var(--cien-2); }
+.miniatura img { width: 100%; height: 100%; object-fit: cover; }
+
+.miniatura button, .miniatura .na-dysku {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(16, 24, 40, .72);
+  color: #fff;
+}
+
+.miniatura .na-dysku { background: #12b76a; }
+.miniatura .ik { width: 16px; height: 16px; }
+
+.dodaj-zdjecie {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 4px;
+  border: 2px dashed var(--linia);
+  background: transparent;
+  color: var(--tekst-2);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.dodaj-zdjecie .ik { width: 26px; height: 26px; }
+
 .strony { display: flex; flex-direction: column; gap: 16px; }
 
 .strona {
@@ -584,12 +631,29 @@ a.chip .ik { color: var(--marka); }
 .narzedzia .kolor[aria-pressed="true"] span { transform: scale(1.12); box-shadow: 0 0 0 3px rgba(16, 24, 40, .92), 0 0 0 5px #fff; }
 .narzedzia .kolor[aria-pressed="true"] { background: transparent; }
 .narzedzia .separator { width: 1px; height: 32px; margin: 0 6px; background: rgba(255, 255, 255, .16); }
+.narzedzia #dodaj-zdjecia { position: relative; }
+
+.narzedzia .licznik {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: var(--marka);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 20px;
+}
 
 @media (max-width: 560px) {
   main { padding: 0 16px 64px; }
   .przyklejone { margin: 0 -16px; padding: 4px 16px 12px; }
   .duzy-tytul { font-size: 28px; }
-  .narzedzia button { width: 46px; height: 50px; }
+  .narzedzia { gap: 2px; }
+  .narzedzia button { width: 40px; height: 50px; }
   .narzedzia .separator { margin: 0 2px; }
   .pola-obok { grid-template-columns: 1fr; }
 }

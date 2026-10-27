@@ -3,8 +3,10 @@
 // localStorage nie wystarcza: surowe arkusze dużej tabeli mają kilka MB.
 
 const BAZA = 'audyt-tablet';
-const WERSJA = 2;
-const MAGAZYNY = ['ustawienia', 'inwestycje', 'audyty', 'szablony'];
+const WERSJA = 3;
+// zdjecia: pliki zdjęć osobno od protokołu - autozapis po każdej kresce nie
+// przepisuje wtedy megabajtów zdjęć.
+const MAGAZYNY = ['ustawienia', 'inwestycje', 'audyty', 'szablony', 'zdjecia'];
 
 let polaczenie = null;
 

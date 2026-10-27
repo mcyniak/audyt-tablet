@@ -179,12 +179,13 @@ export async function folderPodrzedny(idRodzica, pasuje, nowa) {
 }
 
 // Z idPliku - nadpisanie poprzedniej wersji (poprawiony protokół nie tworzy
-// duplikatu), bez - nowy plik w folderze.
-export async function wyslijPdf({ pdf, nazwa, idFolderu, idPliku }) {
-  const metadane = idPliku ? { name: nazwa } : { name: nazwa, mimeType: MIME.pdf, parents: [idFolderu] };
+// duplikatu), bez - nowy plik w folderze. Wysyłka jednym zapytaniem
+// (multipart), więc plik do ~5 MB - zdjęcia są wcześniej zmniejszane.
+export async function wyslijPlik({ plik, nazwa, idFolderu, idPliku }) {
+  const metadane = idPliku ? { name: nazwa } : { name: nazwa, mimeType: plik.type, parents: [idFolderu] };
   const tresc = new FormData();
   tresc.append('metadata', new Blob([JSON.stringify(metadane)], { type: 'application/json' }));
-  tresc.append('file', pdf);
+  tresc.append('file', plik);
   const url = idPliku
     ? `https://www.googleapis.com/upload/drive/v3/files/${idPliku}?uploadType=multipart&supportsAllDrives=true&fields=id,webViewLink`
     : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,webViewLink';

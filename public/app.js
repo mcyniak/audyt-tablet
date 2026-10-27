@@ -397,8 +397,10 @@ function pokazKolejke() {
 const bezpiecznaNazwa = t => t.replace(/[\\/:*?"<>|]+/g, '-').trim();
 const takaSama = nazwa => n => normalizuj(n) === normalizuj(nazwa);
 
-// Protokół trafia do: INWESTYCJE_3 / AUDYTY / <inwestycja> / <PC|PV|KOLEKTORY|kotły> /
-// Brakujące foldery zakładamy; ich id zapamiętujemy, żeby nie szukać za każdym razem.
+// Protokół i zdjęcia trafiają do:
+// INWESTYCJE_3 / AUDYTY / <inwestycja> / <PC|PV|KOLEKTORY|kotły> / <adres> /
+// Brakujące foldery zakładamy; id folderu typu zapamiętujemy w ustawieniach,
+// id folderu adresu w protokole (rekord.drive.folder).
 async function folderTypu(idInwestycji, typ) {
   const klucz = `folder|${idInwestycji}|${typ}`;
   const zapamietany = await odczytaj('ustawienia', klucz);
@@ -412,20 +414,36 @@ async function folderTypu(idInwestycji, typ) {
   return idTypu;
 }
 
+async function folderAdresu(rekord) {
+  const nazwa = bezpiecznaNazwa(rekord.adres);
+  return google.folderPodrzedny(await folderTypu(rekord.inwestycja, rekord.typ), takaSama(nazwa), nazwa);
+}
+
+const kluczZdjecia = (rekord, z) => `${rekord.klucz}|${z.id}`;
+
+// Protokół (nadpisywany przy poprawkach), potem zdjęcia jeszcze niewysłane -
+// każde odhaczane od razu, więc przerwana wysyłka nie powtarza wysłanych.
 async function wyslijRekord(rekord, ponowienie = false) {
-  const idFolderu = rekord.drive?.folder || await folderTypu(rekord.inwestycja, rekord.typ);
-  let wynik;
   try {
-    wynik = await google.wyslijPdf({ pdf: rekord.pdf, nazwa: rekord.nazwaPliku, idFolderu, idPliku: rekord.drive?.id });
+    const idFolderu = rekord.drive?.folder || await folderAdresu(rekord);
+    const wynik = await google.wyslijPlik({ plik: rekord.pdf, nazwa: rekord.nazwaPliku, idFolderu, idPliku: rekord.drive?.id });
+    rekord.drive = { id: wynik.id, link: wynik.webViewLink, folder: idFolderu };
+    for (const z of rekord.zdjecia || []) {
+      if (z.drive) continue;
+      const plik = await odczytaj('zdjecia', kluczZdjecia(rekord, z));
+      if (!plik) continue;
+      z.drive = (await google.wyslijPlik({ plik, nazwa: z.nazwa, idFolderu })).id;
+      await zapiszRekord(rekord);
+    }
   } catch (blad) {
     // Folder albo plik skasowany/przeniesiony na Dysku w międzyczasie -
-    // zapominamy zapamiętane miejsce i zakładamy je od nowa (raz).
+    // zapominamy zapamiętane miejsce i wysyłamy wszystko od nowa (raz).
     if (ponowienie || !/404|not found/i.test(blad.message)) throw blad;
     await usun('ustawienia', `folder|${rekord.inwestycja}|${rekord.typ}`);
     rekord.drive = null;
+    for (const z of rekord.zdjecia || []) z.drive = null;
     return wyslijRekord(rekord, true);
   }
-  rekord.drive = { id: wynik.id, link: wynik.webViewLink, folder: idFolderu };
   rekord.status = 'wyslany';
   rekord.wyslano = new Date().toISOString();
   await zapiszRekord(rekord);
@@ -464,6 +482,7 @@ function zamknijProtokol() {
   stan.protokol.edytor?.zniszcz();
   stan.protokol.dokument?.destroy();
   stan.protokol = null;
+  renderujZdjecia();
 }
 
 function pokazKontakt(a) {
@@ -528,8 +547,14 @@ async function ekranProtokol(idInwestycji, idAdresu, typ) {
     if (stary) szablon = stary;
   }
   rekord.wzor ||= wzor.id;
-  const otwarty = { rekord, szablon };
+  rekord.zdjecia ||= [];
+  const otwarty = { rekord, szablon, zdjecia: new Map() };
   stan.protokol = otwarty;
+  for (const z of rekord.zdjecia) {
+    const plik = await odczytaj('zdjecia', kluczZdjecia(rekord, z));
+    if (plik) otwarty.zdjecia.set(z.id, plik);
+  }
+  renderujZdjecia();
 
   // pdf.js przejmuje bufor na własność - zawsze dajemy mu kopię.
   otwarty.dokument = await pdfjs.getDocument({ data: new Uint8Array(szablon.bajty.slice(0)) }).promise;
@@ -610,6 +635,99 @@ $('dialog-dane').addEventListener('close', () => {
   zapiszSzkic(otwarty, otwarty.edytor.kreski);
 });
 
+// --- Zdjęcia ---
+
+// Zdjęcie z aparatu tabletu ma zwykle 3-8 MB. JPEG do 4,5 MB idzie jak jest
+// (z datą i GPS w EXIF), większe i inne formaty zmniejszamy do 3000 px -
+// wysyłka jednym zapytaniem przyjmuje do 5 MB, a w terenie liczy się transfer.
+const BOK_ZDJECIA = 3000;
+async function przygotujZdjecie(plik) {
+  if (plik.type === 'image/jpeg' && plik.size <= 4.5e6) return plik;
+  const obraz = await createImageBitmap(plik, { imageOrientation: 'from-image' });
+  const skala = Math.min(1, BOK_ZDJECIA / Math.max(obraz.width, obraz.height));
+  const plotno = document.createElement('canvas');
+  plotno.width = Math.round(obraz.width * skala);
+  plotno.height = Math.round(obraz.height * skala);
+  plotno.getContext('2d').drawImage(obraz, 0, 0, plotno.width, plotno.height);
+  obraz.close();
+  return new Promise((ok, blad) => plotno.toBlob(b => b ? ok(b) : blad(new Error('nie udało się zmniejszyć zdjęcia')), 'image/jpeg', 0.88));
+}
+
+const ileZdjec = n => `${n} ${n === 1 ? 'zdjęcie' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'zdjęcia' : 'zdjęć'}`;
+
+let adresyMiniatur = [];
+function renderujZdjecia() {
+  for (const u of adresyMiniatur) URL.revokeObjectURL(u);
+  adresyMiniatur = [];
+  const otwarty = stan.protokol;
+  const zdjecia = otwarty?.rekord.zdjecia || [];
+  $('licznik-zdjec').hidden = !zdjecia.length;
+  $('licznik-zdjec').textContent = zdjecia.length;
+  wstaw($('zdjecia'), !zdjecia.length ? [] : [
+    zdjecia.map(z => {
+      const plik = otwarty.zdjecia.get(z.id);
+      const url = plik && URL.createObjectURL(plik);
+      if (url) adresyMiniatur.push(url);
+      return el('div', { class: 'miniatura' },
+        url && el('img', { src: url, alt: z.nazwa }),
+        z.drive
+          ? el('span', { class: 'na-dysku', title: 'Na Dysku' }, ikona('ok'))
+          : el('button', { type: 'button', 'aria-label': 'Usuń zdjęcie', onclick: () => usunZdjecie(z) }, ikona('zamknij')));
+    }),
+    el('button', { type: 'button', class: 'dodaj-zdjecie', onclick: () => $('wybierz-zdjecia').click() }, ikona('zdjecie'), 'Dodaj')
+  ]);
+}
+
+// Nowe zdjęcie przy wysłanym protokole - protokół czeka na wysyłkę (zdjęcia
+// pójdą z kolejki albo po "Zapisz"); przy szkicu zostaje szkic.
+function oznaczZdjeciaDoWysylki(rekord) {
+  rekord.status = rekord.status === 'wyslany' || rekord.status === 'zapisany' ? 'zapisany' : 'szkic';
+  rekord.zmieniono = new Date().toISOString();
+}
+
+async function usunZdjecie(z) {
+  const otwarty = stan.protokol;
+  if (!otwarty) return;
+  otwarty.rekord.zdjecia = otwarty.rekord.zdjecia.filter(x => x !== z);
+  otwarty.zdjecia.delete(z.id);
+  await usun('zdjecia', kluczZdjecia(otwarty.rekord, z));
+  await zapiszRekord(otwarty.rekord);
+  renderujZdjecia();
+}
+
+$('dodaj-zdjecia').addEventListener('click', () => { if (stan.protokol?.edytor) $('wybierz-zdjecia').click(); });
+
+$('wybierz-zdjecia').addEventListener('change', async e => {
+  const pliki = [...e.target.files];
+  e.target.value = '';
+  const otwarty = stan.protokol;
+  if (!otwarty || !pliki.length) return;
+  const rekord = otwarty.rekord;
+  const trwa = toast(`Dodaję ${ileZdjec(pliki.length)}…`, { czas: 0 });
+  let dodane = 0;
+  try {
+    for (const plik of pliki) {
+      const gotowy = await przygotujZdjecie(plik);
+      rekord.licznikZdjec = (rekord.licznikZdjec || 0) + 1;
+      const nr = String(rekord.licznikZdjec).padStart(2, '0');
+      const z = { id: crypto.randomUUID(), nazwa: bezpiecznaNazwa(`${rekord.adres}_${SKROT_PLIKU[rekord.typ]}_zdjęcie ${nr}`) + '.jpg', drive: null };
+      await zapisz('zdjecia', kluczZdjecia(rekord, z), gotowy);
+      otwarty.zdjecia.set(z.id, gotowy);
+      rekord.zdjecia.push(z);
+      dodane += 1;
+    }
+  } catch (blad) {
+    console.error(blad);
+    toast(`Nie udało się dodać zdjęcia: ${blad.message}`, { typ: 'blad', czas: 8000 });
+  }
+  trwa.remove();
+  if (!dodane) return;
+  oznaczZdjeciaDoWysylki(rekord);
+  await zapiszRekord(rekord);
+  if (stan.protokol === otwarty) renderujZdjecia();
+  toast(`Dodano ${ileZdjec(dodane)}. Pójdą na Dysk po „Zapisz”.`, { typ: 'ok' });
+});
+
 // "Bartodzieje 21_PC.pdf" - tak jak dotychczasowe audyty w folderach projektów.
 const nazwaPliku = rekord => bezpiecznaNazwa(`${rekord.adres}_${SKROT_PLIKU[rekord.typ]}`) + '.pdf';
 
@@ -647,7 +765,9 @@ $('zapisz-protokol').addEventListener('click', async () => {
     try {
       await wyslijRekord(rekord);
       trwa.remove();
-      toast(`Zapisano na Dysku: ${rekord.nazwaPliku}`, { typ: 'ok', akcja: nastepny, czas: 8000 });
+      if (stan.protokol === otwarty) renderujZdjecia();
+      const zdjecia = rekord.zdjecia.length ? ` + ${ileZdjec(rekord.zdjecia.length)}` : '';
+      toast(`Zapisano na Dysku: ${rekord.nazwaPliku}${zdjecia}`, { typ: 'ok', akcja: nastepny, czas: 8000 });
     } catch (blad) {
       console.error(blad);
       trwa.remove();
