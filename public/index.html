@@ -23,29 +23,46 @@
         <h2>Tabela montażowa</h2>
         <p class="opis">Wybierz tabelę inwestycji. Aplikacja zbierze adresy z arkuszy kotłów, solarów, PV_ME i pomp ciepła.</p>
         <div class="przyciski">
-          <button type="button" class="duzy" id="z-drive" disabled>Z Google Drive <small>(wkrótce)</small></button>
+          <button type="button" class="duzy" id="z-drive">Wybierz z Dysku Google</button>
+        </div>
+        <details class="zapasowe">
+          <summary>Inne źródło (plik .xlsx z tabletu)</summary>
           <label class="duzy drugorzedny">
             Z pliku .xlsx
             <input type="file" id="z-pliku" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
           </label>
-        </div>
+        </details>
         <p class="blad" id="blad-tabeli" hidden></p>
       </div>
 
       <div class="karta" id="karta-arkusze" hidden>
-        <h2 id="nazwa-inwestycji"></h2>
+        <div class="naglowek-inwestycji">
+          <h2 id="nazwa-inwestycji"></h2>
+          <button type="button" class="maly" id="odswiez-tabele" hidden>↻ Odśwież z Dysku</button>
+        </div>
+        <p class="opis" id="zrodlo-tabeli"></p>
         <p class="opis">Sprawdź, czy arkusze są dobrze rozpoznane. Możesz poprawić typ albo pominąć arkusz.</p>
         <ul class="arkusze" id="lista-arkuszy"></ul>
         <h3>Szablony protokołów</h3>
         <p class="opis">Pusty protokół PDF dla każdego typu instalacji. Dane z tabeli wpiszą się w niego same.</p>
         <ul class="szablony" id="lista-szablonow"></ul>
         <input type="file" id="plik-szablonu" accept="application/pdf,.pdf" hidden>
+        <h3>Folder na protokoły</h3>
+        <p class="opis">Folder na Dysku Google, do którego trafią zapisane protokoły.</p>
+        <ul class="szablony"><li>
+          <span class="plik" id="folder-protokolow">nie wybrano</span>
+          <button type="button" class="maly" id="wybierz-folder">Wybierz folder</button>
+        </li></ul>
         <button type="button" class="duzy" id="pokaz-adresy"></button>
       </div>
     </section>
 
     <!-- Ekran 2: lista adresów -->
     <section class="ekran" id="ekran-adresy" hidden>
+      <div class="kolejka" id="kolejka" hidden>
+        <span id="kolejka-opis"></span>
+        <button type="button" class="maly" id="wyslij-kolejke">Wyślij na Dysk</button>
+      </div>
       <div class="liczniki" id="liczniki"></div>
       <div class="szukaj">
         <input type="search" id="szukaj" placeholder="Szukaj adresu, nazwiska, telefonu…" autocomplete="off">

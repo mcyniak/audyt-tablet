@@ -268,7 +268,30 @@ select {
 .zrodla ul { margin: 4px 0 0; padding-left: 20px; }
 
 .znaczek.gotowe { color: var(--pc); }
+.znaczek.czeka { color: var(--ostrzezenie); }
 .znaczek.szkic { color: var(--pv); }
+
+.zapasowe { margin-top: 12px; color: var(--przygaszony); }
+.zapasowe summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+.zapasowe .duzy { width: 100%; }
+
+.naglowek-inwestycji { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; justify-content: space-between; }
+.naglowek-inwestycji h2 { margin: 0; }
+
+.kolejka {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--ostrzezenie-tlo);
+  color: var(--ostrzezenie);
+  font-weight: 600;
+}
+
+.kolejka span { flex: 1 1 240px; }
 
 .karta h3 { margin: 20px 0 4px; font-size: 19px; }
 

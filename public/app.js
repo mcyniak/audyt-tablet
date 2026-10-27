@@ -4,13 +4,16 @@ import { odczytaj, zapisz, wszystkie } from './src/magazyn.js';
 import { wyliczWpisy, tekstSzablonu } from './src/wypelnianie.js';
 import { utworzEdytor } from './src/edytor.js';
 import { zbudujPdf } from './src/eksport.js';
+import * as google from './src/google.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.mjs';
 
 // Stan aplikacji. "inwestycja" i audyty przeżywają zamknięcie aplikacji
 // (IndexedDB), reszta to stan widoku.
 const stan = {
-  inwestycja: null, // { nazwa, zrodlo, arkusze: [{ nazwa, wiersze }], przypisania, szablony: { typ: idSzablonu } }
+  // { nazwa, zrodlo: { rodzaj: 'google'|'plik', id?, nazwa }, arkusze: [{ nazwa, wiersze }],
+  //   przypisania, szablony: { typ: idSzablonu }, folder: { id, nazwa } }
+  inwestycja: null,
   wynik: null, // wynik zbudujListeAdresow
   audyty: new Map(), // klucz audytu -> { status, zmieniono }
   filtrTypu: null,
@@ -85,17 +88,55 @@ async function wczytajPlik(plik) {
       // Surowe wartości: sformatowane zamieniłyby telefon 500100200 w "500,100,200".
       wiersze: window.XLSX.utils.sheet_to_json(wb.Sheets[nazwa], { header: 1, defval: null, blankrows: false })
     }));
-    // Szablony zostają przy wczytaniu nowszej wersji tej samej tabeli.
-    const nazwa = nazwaInwestycji(plik.name);
-    const szablony = stan.inwestycja?.nazwa === nazwa ? stan.inwestycja.szablony : {};
-    await ustawInwestycje({ nazwa, zrodlo: { rodzaj: 'plik', nazwa: plik.name }, arkusze, przypisania: {}, szablony });
-    renderujTabele();
+    await ustawNowaTabele(nazwaInwestycji(plik.name), { rodzaj: 'plik', nazwa: plik.name }, arkusze);
   } catch (blad) {
-    console.error(blad);
-    $('blad-tabeli').textContent = `Nie udało się odczytać pliku: ${blad.message}`;
-    $('blad-tabeli').hidden = false;
+    pokazBladTabeli(`Nie udało się odczytać pliku: ${blad.message}`);
   }
 }
+
+function pokazBladTabeli(tekst) {
+  if (tekst) console.error(tekst);
+  $('blad-tabeli').textContent = tekst || '';
+  $('blad-tabeli').hidden = !tekst;
+}
+
+// Szablony, folder i ręczne przypisania arkuszy zostają przy wczytaniu
+// nowszej wersji tej samej tabeli (np. "Odśwież z Dysku").
+async function ustawNowaTabele(nazwa, zrodlo, arkusze) {
+  const poprzednia = stan.inwestycja?.nazwa === nazwa ? stan.inwestycja : {};
+  await ustawInwestycje({
+    nazwa,
+    zrodlo,
+    arkusze,
+    przypisania: poprzednia.przypisania || {},
+    szablony: poprzednia.szablony || {},
+    folder: poprzednia.folder || null
+  });
+  renderujTabele();
+}
+
+async function wczytajZGoogle(idArkusza) {
+  pokazBladTabeli('');
+  const przycisk = $('z-drive');
+  przycisk.disabled = true;
+  try {
+    const plik = idArkusza ? { id: idArkusza } : await google.wybierzTabele();
+    if (!plik) return;
+    const { tytul, arkusze } = await google.odczytajTabele(plik.id);
+    await ustawNowaTabele(nazwaInwestycji(tytul), { rodzaj: 'google', id: plik.id, nazwa: tytul }, arkusze);
+  } catch (blad) {
+    pokazBladTabeli(`Nie udało się wczytać tabeli z Dysku: ${blad.message}`);
+  } finally {
+    przycisk.disabled = false;
+  }
+}
+
+$('z-drive').addEventListener('click', () => {
+  if (!google.skonfigurowany()) { pokazBladTabeli('Połączenie z Google nie jest jeszcze skonfigurowane (config.js).'); return; }
+  if (!navigator.onLine) { pokazBladTabeli('Brak internetu – tabelę z Dysku wczytasz, gdy będzie zasięg.'); return; }
+  wczytajZGoogle();
+});
+$('odswiez-tabele').addEventListener('click', () => wczytajZGoogle(stan.inwestycja?.zrodlo?.id));
 
 async function ustawInwestycje(inwestycja) {
   stan.inwestycja = inwestycja;
@@ -121,6 +162,11 @@ function renderujTabele() {
   if (!stan.wynik) { karta.hidden = true; return; }
   karta.hidden = false;
   $('nazwa-inwestycji').textContent = stan.inwestycja.nazwa;
+  const zrodlo = stan.inwestycja.zrodlo || {};
+  $('zrodlo-tabeli').textContent = zrodlo.rodzaj === 'google' ? `Dysk Google: ${zrodlo.nazwa}` : `Plik: ${zrodlo.nazwa || '—'}`;
+  $('odswiez-tabele').hidden = zrodlo.rodzaj !== 'google';
+  $('folder-protokolow').textContent = stan.inwestycja.folder?.nazwa || 'nie wybrano – protokoły zostaną w tablecie';
+  $('folder-protokolow').classList.toggle('brak', !stan.inwestycja.folder);
 
   const opcje = [{ id: '', etykieta: '— pomiń —' }, ...TYPY];
   const wierszArkusza = arkusz => {
@@ -161,10 +207,25 @@ function renderujTabele() {
   $('pokaz-adresy').disabled = !razem;
 }
 
+// Szablon z Dysku Google (gdy skonfigurowany i jest internet), inaczej z pliku na tablecie.
 let typWybieranegoSzablonu = null;
-function wybierzSzablon(typ) {
+async function wybierzSzablon(typ) {
   typWybieranegoSzablonu = typ;
-  $('plik-szablonu').click();
+  if (!google.skonfigurowany() || !navigator.onLine) { $('plik-szablonu').click(); return; }
+  try {
+    const plik = await google.wybierzSzablon();
+    if (plik) await zapamietajSzablon(typ, `${plik.name}|${plik.id}`, plik.name, await google.pobierzPlik(plik.id));
+  } catch (blad) {
+    alert(`Nie udało się wczytać szablonu z Dysku: ${blad.message}`);
+  }
+  renderujTabele();
+}
+
+async function zapamietajSzablon(typ, id, nazwa, bajty) {
+  // Sprawdzenie, czy to w ogóle da się otworzyć, zanim zapamiętamy.
+  await pdfjs.getDocument({ data: new Uint8Array(bajty.slice(0)) }).promise;
+  await zapisz('szablony', id, { nazwa, bajty });
+  await ustawInwestycje({ ...stan.inwestycja, szablony: { ...stan.inwestycja.szablony, [typ]: id } });
 }
 
 $('plik-szablonu').addEventListener('change', async e => {
@@ -172,15 +233,22 @@ $('plik-szablonu').addEventListener('change', async e => {
   e.target.value = '';
   if (!plik || !typWybieranegoSzablonu) return;
   try {
-    const bajty = await plik.arrayBuffer();
-    // Sprawdzenie, czy to w ogóle da się otworzyć, zanim zapamiętamy.
-    await pdfjs.getDocument({ data: new Uint8Array(bajty.slice(0)) }).promise;
-    const id = `${plik.name}|${plik.size}`;
-    await zapisz('szablony', id, { nazwa: plik.name, bajty });
-    await ustawInwestycje({ ...stan.inwestycja, szablony: { ...stan.inwestycja.szablony, [typWybieranegoSzablonu]: id } });
+    await zapamietajSzablon(typWybieranegoSzablonu, `${plik.name}|${plik.size}`, plik.name, await plik.arrayBuffer());
   } catch (blad) {
     console.error(blad);
     alert(`Nie udało się wczytać szablonu: ${blad.message}`);
+  }
+  renderujTabele();
+});
+
+$('wybierz-folder').addEventListener('click', async () => {
+  if (!google.skonfigurowany()) { alert('Połączenie z Google nie jest jeszcze skonfigurowane.'); return; }
+  if (!navigator.onLine) { alert('Brak internetu – folder wybierzesz, gdy będzie zasięg.'); return; }
+  try {
+    const folder = await google.wybierzFolder();
+    if (folder) await ustawInwestycje({ ...stan.inwestycja, folder: { id: folder.id, nazwa: folder.name } });
+  } catch (blad) {
+    alert(`Nie udało się wybrać folderu: ${blad.message}`);
   }
   renderujTabele();
 });
@@ -239,15 +307,61 @@ function renderujAdresy() {
     )
   )));
   $('brak-wynikow').hidden = widoczne.length > 0;
+  pokazKolejke();
 }
 
-// ✔ gdy wszystkie protokoły pod adresem zapisane, ✎ gdy coś zaczęte.
+// ✔ wszystkie protokoły pod adresem na Dysku, ⇡ zapisane w tablecie i czekają
+// na wysyłkę, ✎ coś rozpoczęte.
 function znaczekStatusu(a) {
   const statusy = a.typy.map(typ => stan.audyty.get(kluczAudytu(a, typ))?.status);
-  if (statusy.every(s => s === 'zapisany')) return el('span', { class: 'znaczek gotowe', title: 'Protokół zapisany' }, '✔');
+  if (statusy.every(s => s === 'wyslany')) return el('span', { class: 'znaczek gotowe', title: 'Protokół na Dysku Google' }, '✔');
+  if (statusy.every(s => s === 'wyslany' || s === 'zapisany')) return el('span', { class: 'znaczek czeka', title: 'Zapisany w tablecie, czeka na wysyłkę' }, '⇡');
   if (statusy.some(Boolean)) return el('span', { class: 'znaczek szkic', title: 'Protokół rozpoczęty' }, '✎');
   return null;
 }
+
+// --- Wysyłka na Dysk Google ---
+
+const czekajaceNaWysylke = () => [...stan.audyty].filter(([klucz, a]) => a.status === 'zapisany' && klucz.startsWith(`${stan.inwestycja.nazwa}|`)).map(([klucz]) => klucz);
+
+function pokazKolejke() {
+  const ile = stan.inwestycja ? czekajaceNaWysylke().length : 0;
+  $('kolejka').hidden = ile === 0;
+  if (!ile) return;
+  const folder = stan.inwestycja.folder;
+  $('kolejka-opis').textContent = `${ile} ${ile === 1 ? 'protokół czeka' : 'protokoły(-ów) czekają'} na wysyłkę${folder ? '' : ' – najpierw wybierz folder na ekranie tabeli'}.`;
+  $('wyslij-kolejke').disabled = !folder || !navigator.onLine || !google.skonfigurowany();
+}
+
+async function wyslijRekord(rekord) {
+  const folder = stan.inwestycja.folder;
+  if (!folder || !rekord.pdf) return false;
+  // Ten sam plik na Dysku nadpisujemy (poprawiony protokół bez duplikatu),
+  // chyba że w międzyczasie zmieniono folder docelowy.
+  const idPliku = rekord.drive?.folder === folder.id ? rekord.drive.id : undefined;
+  const wynik = await google.wyslijPdf({ pdf: rekord.pdf, nazwa: rekord.nazwaPliku, idFolderu: folder.id, idPliku });
+  rekord.drive = { id: wynik.id, link: wynik.webViewLink, folder: folder.id };
+  rekord.status = 'wyslany';
+  rekord.wyslano = new Date().toISOString();
+  await zapiszRekord(rekord);
+  return true;
+}
+
+$('wyslij-kolejke').addEventListener('click', async () => {
+  const przycisk = $('wyslij-kolejke');
+  przycisk.disabled = true;
+  let wyslane = 0;
+  try {
+    for (const klucz of czekajaceNaWysylke()) {
+      const rekord = await odczytaj('audyty', klucz);
+      if (rekord && await wyslijRekord(rekord)) wyslane += 1;
+      $('kolejka-opis').textContent = `Wysłano ${wyslane}…`;
+    }
+  } catch (blad) {
+    alert(`Wysyłka przerwana (wysłano ${wyslane}): ${blad.message}`);
+  }
+  renderujAdresy();
+});
 
 $('szukaj').addEventListener('input', e => { stan.szukaj = e.target.value; renderujAdresy(); });
 $('pokaz-rezygnacje').addEventListener('change', e => { stan.pokazRezygnacje = e.target.checked; renderujAdresy(); });
@@ -288,12 +402,13 @@ function renderujAdres(a) {
   $('protokoly').replaceChildren(...a.typy.map(typ => {
     const status = stan.audyty.get(kluczAudytu(a, typ))?.status;
     const opis = !szablony[typ] ? 'brak szablonu – wczytaj go na ekranie tabeli'
-      : status === 'zapisany' ? 'zapisany ✔ – otwórz, żeby poprawić'
-        : status === 'szkic' ? 'rozpoczęty – kontynuuj'
-          : 'nowy';
+      : status === 'wyslany' ? 'na Dysku Google ✔ – otwórz, żeby poprawić'
+        : status === 'zapisany' ? 'zapisany w tablecie, czeka na wysyłkę'
+          : status === 'szkic' ? 'rozpoczęty – kontynuuj'
+            : 'nowy';
     return el('button', {
       type: 'button',
-      class: `duzy${status === 'zapisany' ? ' drugorzedny' : ''}`,
+      class: `duzy${status === 'zapisany' || status === 'wyslany' ? ' drugorzedny' : ''}`,
       disabled: !szablony[typ],
       onclick: () => { location.hash = `audyt/${encodeURIComponent(a.id)}/${typ}`; }
     }, `Protokół – ${TYP[typ].etykieta}`, el('small', {}, opis));
@@ -361,7 +476,7 @@ async function otworzAudyt(a, typ) {
     onZmiana: kreski => zapiszSzkic(otwarty, kreski)
   });
   ustawPrzyciski();
-  komunikat(rekord.status === 'zapisany' ? 'Ten protokół był już zapisany. Zmiany wymagają ponownego „Zapisz”.' : '');
+  komunikat(rekord.status === 'zapisany' || rekord.status === 'wyslany' ? 'Ten protokół był już zapisany. Zmiany wymagają ponownego „Zapisz”.' : '');
 }
 
 const wpisyDla = otwarty => wyliczWpisy(otwarty.strony, { ...otwarty.rekord.dane, data: dataLokalna(otwarty.rekord.dane.data) });
@@ -455,8 +570,23 @@ $('zapisz-protokol').addEventListener('click', async () => {
     rekord.zmieniono = rekord.zapisano;
     clearTimeout(czasAutozapisu);
     await zapiszRekord(rekord);
-    const link = el('a', { href: URL.createObjectURL(rekord.pdf), download: rekord.nazwaPliku }, 'Pobierz PDF');
-    komunikat(`Zapisano w tablecie: ${rekord.nazwaPliku}. `, link, ' (wysyłka na Google Drive – w kolejnym etapie)');
+    const pobierz = el('a', { href: URL.createObjectURL(rekord.pdf), download: rekord.nazwaPliku }, 'pobierz PDF');
+    // Od razu na Dysk, jeśli się da. Bez zasięgu protokół czeka w tablecie -
+    // na liście adresów pojawi się przycisk "Wyślij na Dysk".
+    if (!stan.inwestycja.folder || !google.skonfigurowany()) {
+      komunikat(`Zapisano w tablecie: ${rekord.nazwaPliku} (`, pobierz, '). Wybierz folder na Dysku na ekranie tabeli, żeby wysyłać protokoły.');
+    } else if (!navigator.onLine) {
+      komunikat(`Zapisano w tablecie: ${rekord.nazwaPliku}. Brak internetu – wyślesz go z listy adresów, gdy będzie zasięg.`);
+    } else {
+      komunikat('Wysyłam na Dysk Google…');
+      try {
+        await wyslijRekord(rekord);
+        komunikat(`Wysłano na Dysk: ${rekord.nazwaPliku} → folder „${stan.inwestycja.folder.nazwa}”. `, el('a', { href: rekord.drive.link, target: '_blank', rel: 'noopener' }, 'otwórz'));
+      } catch (blad) {
+        console.error(blad);
+        komunikat(`Zapisano w tablecie, ale wysyłka się nie udała (${blad.message}). Spróbujesz ponownie z listy adresów.`);
+      }
+    }
   } catch (blad) {
     console.error(blad);
     komunikat(`Nie udało się zapisać protokołu: ${blad.message}`);
@@ -469,6 +599,7 @@ $('zapisz-protokol').addEventListener('click', async () => {
 
 function pokazSiec() {
   $('siec').textContent = navigator.onLine ? '' : 'offline';
+  if (stan.inwestycja) pokazKolejke();
 }
 window.addEventListener('online', pokazSiec);
 window.addEventListener('offline', pokazSiec);

@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import XLSX from 'xlsx';
 import { rozpoznajTypArkusza, kluczAdresu, zbudujListeAdresow } from '../public/src/tabela.js';
+import { zArkuszyGoogle } from '../public/src/google.js';
 import { lokalne } from './lokalne.js';
 
 function wczytaj(sciezka) {
@@ -107,6 +108,21 @@ test('ręczne przypisanie arkusza nadpisuje rozpoznanie', () => {
   const wynik = zbudujListeAdresow(arkusze, { Arkusz1: 'kotly', PV_ME: null });
   assert.equal(wynik.razem, 1);
   assert.deepEqual(wynik.adresy[0].typy, ['kotly']);
+});
+
+test('dane z Google Sheets (poszarpane wiersze, puste arkusze) dają tę samą listę', () => {
+  // Sheets API pomija puste komórki na końcu wiersza, pusty wiersz w środku
+  // zwraca jako [], a dla pustego arkusza w ogóle nie ma "values".
+  const arkusze = zArkuszyGoogle(['PV_ME', 'ekipy', 'pompy ciepła'], [
+    { range: "'PV_ME'!A1:Z100", values: [['LP', 'Imię i Nazwisko', 'Adres', 'Nr telefonu'], [], [1, 'Jan Przykładowy', 'Testowo 1', 500100200], [2, 'Anna Testowa', 'Wzorowo 5']] },
+    { range: "'ekipy'!A1:Z100" },
+    { range: "'pompy ciepła'!A1:Z100", values: [['LP', 'Adres'], [1, 'TESTOWO 1']] }
+  ]);
+  const wynik = zbudujListeAdresow(arkusze);
+  assert.equal(wynik.razem, 2);
+  assert.deepEqual(wynik.adresy.find(a => a.adres === 'Testowo 1').typy, ['pv_me', 'pompy']);
+  assert.equal(wynik.adresy.find(a => a.adres === 'Testowo 1').telefon, '500 100 200');
+  assert.equal(wynik.adresy.find(a => a.adres === 'Wzorowo 5').telefon, '');
 });
 
 test('arkusz bez kolumny Adres zgłasza błąd zamiast cicho liczyć 0', () => {
