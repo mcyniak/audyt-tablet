@@ -663,7 +663,7 @@ function renderujZdjecia() {
   const zdjecia = otwarty?.rekord.zdjecia || [];
   $('licznik-zdjec').hidden = !zdjecia.length;
   $('licznik-zdjec').textContent = zdjecia.length;
-  wstaw($('zdjecia'), !zdjecia.length ? [] : [
+  wstaw($('zdjecia'), !otwarty ? [] : [
     zdjecia.map(z => {
       const plik = otwarty.zdjecia.get(z.id);
       const url = plik && URL.createObjectURL(plik);
@@ -674,7 +674,7 @@ function renderujZdjecia() {
           ? el('span', { class: 'na-dysku', title: 'Na Dysku' }, ikona('ok'))
           : el('button', { type: 'button', 'aria-label': 'Usuń zdjęcie', onclick: () => usunZdjecie(z) }, ikona('zamknij')));
     }),
-    el('button', { type: 'button', class: 'dodaj-zdjecie', onclick: () => $('wybierz-zdjecia').click() }, ikona('zdjecie'), 'Dodaj')
+    el('button', { type: 'button', class: 'dodaj-zdjecie', onclick: () => $('wybierz-zdjecia').click() }, ikona('zdjecie'), 'Dodaj zdjęcia')
   ]);
 }
 

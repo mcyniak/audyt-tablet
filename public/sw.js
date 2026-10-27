@@ -2,7 +2,7 @@
 // startowała w terenie bez internetu. Strategia: najpierw sieć (świeża
 // wersja po aktualizacji), przy braku sieci - kopia z pamięci.
 // Zmień WERSJA przy każdym wydaniu, żeby stare pliki zostały wyrzucone.
-const WERSJA = 'audyt-v6';
+const WERSJA = 'audyt-v7';
 const PLIKI = [
   './',
   'index.html',
@@ -49,7 +49,9 @@ self.addEventListener('fetch', e => {
   // zawsze prosto do sieci, nigdy z pamięci podręcznej.
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;
   e.respondWith(
-    fetch(e.request)
+    // no-cache: GitHub Pages każe przeglądarce trzymać pliki 10 minut -
+    // bez tego świeżo wydana wersja docierałaby do tabletu z opóźnieniem.
+    fetch(e.request, { cache: 'no-cache' })
       .then(odpowiedz => {
         if (odpowiedz.ok) {
           const kopia = odpowiedz.clone();

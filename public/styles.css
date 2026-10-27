@@ -566,15 +566,18 @@ a.chip .ik { color: var(--marka); }
   place-content: center;
   justify-items: center;
   gap: 4px;
-  border: 2px dashed var(--linia);
-  background: transparent;
-  color: var(--tekst-2);
+  width: auto;
+  min-width: 96px;
+  padding: 0 16px;
+  border: 2px dashed var(--linia-mocna);
+  background: var(--powierzchnia);
+  color: var(--tekst);
   font: inherit;
   font-size: 13px;
   font-weight: 600;
 }
 
-.dodaj-zdjecie .ik { width: 26px; height: 26px; }
+.dodaj-zdjecie .ik { width: 26px; height: 26px; color: var(--marka); }
 
 .strony { display: flex; flex-direction: column; gap: 16px; }
 
