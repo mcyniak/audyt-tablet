@@ -20,6 +20,10 @@
 }
 
 :root {
+  /* Zawsze jasna - w terenie, w słońcu ciemny ekran jest nieczytelny, a
+     protokół i tak jest białą kartką. "only" wyłącza też wymuszone
+     przyciemnianie stron w Chrome. */
+  color-scheme: only light;
   --marka: #cf171f;
   --marka-ciemna: #a8121a;
   --marka-tlo: #fdecec;
@@ -50,31 +54,6 @@
   --r-l: 20px;
   --cel: 52px;
   --czas: 180ms cubic-bezier(.2, .8, .2, 1);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --marka: #f04349;
-    --marka-ciemna: #d92d33;
-    --marka-tlo: #3a1517;
-    --tlo: #0d0f12;
-    --powierzchnia: #16191e;
-    --powierzchnia-2: #1f232a;
-    --tekst: #f2f4f7;
-    --tekst-2: #b0b8c4;
-    --tekst-3: #6b7480;
-    --linia: #262b33;
-    --linia-mocna: #343a44;
-    --ok: #47cd89;
-    --ok-tlo: #10301f;
-    --czeka: #fdb022;
-    --czeka-tlo: #33240b;
-    --info: #84adff;
-    --cien-1: none;
-    --cien-2: 0 0 0 1px var(--linia);
-    --cien-3: 0 16px 40px rgba(0, 0, 0, .5);
-    --pasek-tlo: rgba(13, 15, 18, .82);
-  }
 }
 
 * { box-sizing: border-box; }
