@@ -5,7 +5,7 @@ import { wyliczWpisy, tekstSzablonu } from './src/wypelnianie.js';
 import { utworzEdytor } from './src/edytor.js';
 import { zbudujPdf } from './src/eksport.js';
 import { wybierzWzor } from './src/wzory.js';
-import { PYTANIA_PV, kolumnyPytan, odpowiedziZWiersza, znajdzWiersz, zmianyWiersza } from './src/ankieta.js';
+import { PYTANIA_PV, kolumnyPytan, odpowiedziZWiersza, znajdzWiersz, zmianyWiersza, pytaniaNaWzorze, odpowiedziZProtokolu } from './src/ankieta.js';
 import { ikona, wstawIkony } from './src/ikony.js';
 import * as google from './src/google.js';
 import { DYSK } from './config.js';
@@ -586,6 +586,8 @@ async function ekranProtokol(idInwestycji, idAdresu, typ) {
   // pdf.js przejmuje bufor na własność - zawsze dajemy mu kopię.
   otwarty.dokument = await pdfjs.getDocument({ data: new Uint8Array(szablon.bajty.slice(0)) }).promise;
   otwarty.strony = await tekstSzablonu(otwarty.dokument);
+  // Gdzie na wzorze są kratki pytań do tabeli (na razie tylko PV).
+  otwarty.mapa = typ === 'pv_me' ? pytaniaNaWzorze(otwarty.strony) : {};
   if (stan.protokol !== otwarty) return; // audytor zdążył wyjść
   otwarty.edytor = await utworzEdytor($('strony'), {
     dokument: otwarty.dokument,
@@ -759,7 +761,9 @@ $('wybierz-zdjecia').addEventListener('change', async e => {
 
 const wierszeArkusza = nazwa => stan.inwestycja?.arkusze.find(a => a.nazwa === nazwa)?.wiersze || [];
 
+// Pytanie, którego nie ma na protokole - audytor zaznacza przyciskiem.
 function pytanieTabeli(p, odpowiedzi) {
+  const wybrana = id => Boolean(odpowiedzi[p.id]?.opcje.includes(id));
   const dopisek = el('input', {
     class: 'dopisek',
     placeholder: 'Jakie? (opcjonalnie)',
@@ -772,36 +776,64 @@ function pytanieTabeli(p, odpowiedzi) {
     class: p.id === 'rezygnacja' ? 'wybor grozny' : 'wybor',
     // Drugie stuknięcie odznacza - wtedy komórka w tabeli zostaje bez zmian.
     onclick: () => {
-      if (odpowiedzi[p.id]?.opcja === o.id) delete odpowiedzi[p.id];
-      else odpowiedzi[p.id] = { opcja: o.id, dopisek: o.dopisek ? dopisek.value.trim() : '' };
+      if (wybrana(o.id)) delete odpowiedzi[p.id];
+      else odpowiedzi[p.id] = { opcje: [o.id], dopisek: o.dopisek ? dopisek.value.trim() : '' };
       odswiez();
     }
   }, o.etykieta));
   const odswiez = () => {
-    przyciski.forEach((b, i) => b.setAttribute('aria-pressed', String(odpowiedzi[p.id]?.opcja === p.opcje[i].id)));
-    dopisek.hidden = !p.opcje.find(o => o.id === odpowiedzi[p.id]?.opcja)?.dopisek;
+    przyciski.forEach((b, i) => b.setAttribute('aria-pressed', String(wybrana(p.opcje[i].id))));
+    dopisek.hidden = !p.opcje.some(o => o.dopisek && wybrana(o.id));
   };
   odswiez();
   return el('fieldset', { class: 'pytanie' }, el('legend', {}, p.pytanie), el('div', { class: 'wybory' }, przyciski), dopisek);
 }
 
-// Pytania pokazujemy tylko te, które mają kolumnę w tabeli; na start to, co
-// audytor zaznaczył wcześniej, a jeśli nic - to, co już jest w tabeli.
+// Odpowiedź odczytana z kratek protokołu - tylko do wglądu; poprawia się ją
+// na protokole, żeby PDF i tabela zawsze mówiły to samo.
+function odczytZProtokolu(p, odpowiedz, niejasne) {
+  const tresc = niejasne
+    ? el('p', { class: 'odczyt ostrzezenie' }, ikona('uwaga'), 'Zaznaczone dwie sprzeczne kratki – popraw na protokole. W tabeli bez zmian.')
+    : odpowiedz
+      ? el('div', { class: 'wybory' }, p.opcje.filter(o => odpowiedz.opcje.includes(o.id))
+        .map(o => el('span', { class: p.id === 'rezygnacja' ? 'odczytana grozna' : 'odczytana' }, ikona('ok'), p.id === 'rezygnacja' ? 'Klient rezygnuje (wypełniona sekcja rezygnacji)' : o.etykieta)))
+      : el('p', { class: 'odczyt' }, 'Nic nie zaznaczono – w tabeli bez zmian');
+  return el('div', { class: 'pytanie' }, el('div', { class: 'legenda' }, p.pytanie), tresc);
+}
+
+// Okno przed zapisem PV. Pytania tylko te, które mają kolumnę w tabeli:
+// odpowiedzi z kratek zaznaczonych na protokole (podgląd) + przyciski dla
+// pytań, których na protokole nie ma (na start: poprzedni wybór albo stan tabeli).
 // undefined: tabela nie ma żadnej z kolumn, null: audytor wrócił do protokołu.
-function zapytajOTabele(rekord) {
+function zapytajOTabele(otwarty) {
+  const { rekord, mapa } = otwarty;
   const cel = rekord.wiersze?.[0];
   const wiersze = cel ? wierszeArkusza(cel.arkusz) : [];
   const naglowek = znajdzNaglowek(wiersze);
   const kolumny = naglowek ? kolumnyPytan(wiersze[naglowek.wiersz]) : {};
   const pytania = PYTANIA_PV.filter(p => kolumny[p.id] !== undefined);
   if (!pytania.length) return Promise.resolve(undefined);
-  const odpowiedzi = structuredClone(rekord.tabela?.odpowiedzi || odpowiedziZWiersza(wiersze, cel.wiersz));
-  wstaw($('pytania'), pytania.map(p => pytanieTabeli(p, odpowiedzi)));
+
+  const { odpowiedzi: zProtokolu, niejasne } = odpowiedziZProtokolu(mapa, otwarty.edytor.kreski, otwarty.strony);
+  const naProtokole = pytania.filter(p => mapa[p.id] && (p.id !== 'rezygnacja' || zProtokolu.rezygnacja));
+  const doZaznaczenia = pytania.filter(p => !mapa[p.id]);
+  const wczesniej = rekord.tabela?.odpowiedzi || odpowiedziZWiersza(wiersze, cel.wiersz);
+  const odpowiedzi = Object.fromEntries(doZaznaczenia.filter(p => wczesniej[p.id]).map(p => [p.id, structuredClone(wczesniej[p.id])]));
+
+  $('dialog-tabela-opis').textContent = naProtokole.length
+    ? 'Odczytane z kratek zaznaczonych na protokole. Jeśli coś się nie zgadza, wróć i popraw na protokole.'
+    : 'Zaznaczone odpowiedzi trafią do tabeli montażowej. Pytania bez zaznaczenia zostają w tabeli bez zmian.';
+  wstaw($('pytania'), [
+    naProtokole.length && doZaznaczenia.length && el('h3', { class: 'sekcja' }, 'Z protokołu'),
+    naProtokole.map(p => odczytZProtokolu(p, zProtokolu[p.id], niejasne.includes(p.id))),
+    naProtokole.length && doZaznaczenia.length && el('h3', { class: 'sekcja' }, 'Tego nie ma na protokole'),
+    doZaznaczenia.map(p => pytanieTabeli(p, odpowiedzi))
+  ]);
   const okno = $('dialog-tabela');
   okno.returnValue = '';
   okno.showModal();
   okno.scrollTop = 0;
-  return new Promise(ok => okno.addEventListener('close', () => ok(okno.returnValue === 'ok' ? odpowiedzi : null), { once: true }));
+  return new Promise(ok => okno.addEventListener('close', () => ok(okno.returnValue === 'ok' ? { ...odpowiedzi, ...zProtokolu } : null), { once: true }));
 }
 
 // "Bartodzieje 21_PC.pdf" - tak jak dotychczasowe audyty w folderach projektów.
@@ -811,7 +843,7 @@ $('zapisz-protokol').addEventListener('click', async () => {
   const otwarty = stan.protokol;
   if (!otwarty?.edytor) return;
   if (otwarty.rekord.typ === 'pv_me') {
-    const odpowiedzi = await zapytajOTabele(otwarty.rekord);
+    const odpowiedzi = await zapytajOTabele(otwarty);
     if (odpowiedzi === null || stan.protokol !== otwarty) return;
     if (odpowiedzi) otwarty.rekord.tabela = { odpowiedzi, wpisano: false };
   }

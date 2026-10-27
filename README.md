@@ -76,13 +76,19 @@ kolumna „rodzaj pompy” z tabeli.
 
 ## Audyt PV → tabela montażowa
 
-Przy „Zapisz” protokołu PV wyskakuje okno z pytaniami (`public/src/ankieta.js`):
-miejsce montażu PV, miejsce magazynu energii, zwiększenie mocy umownej, prywatna
-instalacja PV, pokrycie dachowe, zmniejszenie mocy PV, usunięcie magazynu,
-rezygnacja. Odpowiedzi to przyciski, bez odczytywania pisma.
+Audytor zaznacza kratki ☐ na protokole jak na papierze; przy „Zapisz” aplikacja
+sprawdza, przez które kratki przechodzą kreski rysika (`public/src/ankieta.js`) -
+to geometria, nie odczyt pisma. Kratki pytań znajdowane są we wzorze automatycznie
+(tekst pytania, potem kolejne kratki z pasującymi podpisami).
 
-- Pokazywane są tylko pytania, dla których tabela ma kolumnę (dopasowanie po nazwie).
-- Na start: poprzednie odpowiedzi audytora, a jeśli ich nie ma - to, co jest w tabeli.
+Pytania: miejsce montażu PV, zwiększenie mocy umownej, prywatna/istniejąca
+instalacja PV, pokrycie dachowe, zmniejszenie mocy PV, usunięcie magazynu,
+rezygnacja (pismo w linii „Ja niżej podpisany” sekcji rezygnacji). Miejsca montażu
+magazynu energii nie ma na wzorze - o nie okno pyta przyciskami.
+
+- Okno przed zapisem pokazuje odczyt z protokołu tylko do wglądu; poprawia się na
+  protokole, żeby PDF i tabela mówiły to samo. TAK i NIE naraz = w tabeli bez zmian.
+- Tylko pytania, dla których tabela ma kolumnę (dopasowanie po nazwie).
 - Wpis po wysłaniu PDF-a, na świeżo pobranym arkuszu. Wiersz: zapamiętany numer,
   a gdy się przesunął - po adresie (i UID); dwa pasujące wiersze = błąd, bez zgadywania.
 - Zmieniane są tylko komórki z inną odpowiedzią, pisownią używaną już w tej

@@ -8,4 +8,4 @@ const SCIEZKA = new URL('./lokalne.json', import.meta.url);
 
 export const lokalne = fs.existsSync(SCIEZKA)
   ? JSON.parse(fs.readFileSync(SCIEZKA, 'utf8'))
-  : { tabele: [], szablony: [] };
+  : { tabele: [], szablony: [], szablonyPv: [] };

@@ -2,11 +2,17 @@
   "tabele": [
     {
       "plik": "C:/Users/ktos/Downloads/MIASTO 2025 - tab. montażowa PV, PC.xlsx",
-      "arkusze": { "PV_ME": "pv_me", "pompy ciepła": "pompy" },
+      "arkusze": {
+        "PV_ME": "pv_me",
+        "pompy ciepła": "pompy"
+      },
       "razem": 123
     }
   ],
   "szablony": [
     "G:/Dyski współdzielone/.../Protokół uzgodnień montażowych - Gmina.pdf"
+  ],
+  "szablonyPv": [
+    "C:/sciezka/do/Wzor audytu PV.pdf"
   ]
 }

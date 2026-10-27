@@ -465,7 +465,26 @@ dialog::backdrop { background: rgba(16, 24, 40, .4); backdrop-filter: blur(2px);
 dialog.arkusz-szeroki { width: min(720px, 100vw); max-height: 92dvh; overflow-y: auto; }
 
 .pytanie { margin: 0 0 20px; padding: 0; border: 0; }
-.pytanie legend { margin-bottom: 10px; padding: 0; font-size: 16px; font-weight: 700; }
+.pytanie legend, .pytanie .legenda { margin-bottom: 10px; padding: 0; font-size: 16px; font-weight: 700; }
+.sekcja { margin: 4px 0 14px; color: var(--tekst-3); font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.odczyt { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--tekst-3); font-size: 15px; }
+.odczyt.ostrzezenie { color: var(--czeka); font-weight: 600; }
+.odczyt .ik { flex: none; width: 20px; height: 20px; }
+.odczytana {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 14px 0 10px;
+  border-radius: var(--r-s);
+  background: var(--ok-tlo);
+  color: var(--ok);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.odczytana .ik { width: 18px; height: 18px; }
+.odczytana.grozna { background: var(--marka-tlo); color: var(--marka); }
 .wybory { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .wybor {
