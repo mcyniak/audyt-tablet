@@ -1,10 +1,11 @@
 import * as pdfjs from './vendor/pdf.min.mjs';
-import { TYPY, normalizuj, zbudujListeAdresow } from './src/tabela.js';
+import { TYPY, normalizuj, zbudujListeAdresow, znajdzNaglowek } from './src/tabela.js';
 import { odczytaj, zapisz, usun, wszystkie } from './src/magazyn.js';
 import { wyliczWpisy, tekstSzablonu } from './src/wypelnianie.js';
 import { utworzEdytor } from './src/edytor.js';
 import { zbudujPdf } from './src/eksport.js';
 import { wybierzWzor } from './src/wzory.js';
+import { PYTANIA_PV, kolumnyPytan, odpowiedziZWiersza, znajdzWiersz, zmianyWiersza } from './src/ankieta.js';
 import { ikona, wstawIkony } from './src/ikony.js';
 import * as google from './src/google.js';
 import { DYSK } from './config.js';
@@ -444,9 +445,33 @@ async function wyslijRekord(rekord, ponowienie = false) {
     for (const z of rekord.zdjecia || []) z.drive = null;
     return wyslijRekord(rekord, true);
   }
+  // Tabela po plikach i poza blokiem wyżej: 404 z arkusza to nie skasowany folder.
+  if (rekord.tabela && !rekord.tabela.wpisano) {
+    await zapiszRekord(rekord);
+    await wpiszDoTabeli(rekord);
+    rekord.tabela.wpisano = true;
+  }
   rekord.status = 'wyslany';
   rekord.wyslano = new Date().toISOString();
   await zapiszRekord(rekord);
+}
+
+// Odpowiedzi PV do każdego wiersza PV tego adresu, na świeżo pobranym arkuszu.
+async function wpiszDoTabeli(rekord) {
+  const { tabela } = await odczytaj('inwestycje', rekord.inwestycja);
+  if (tabela.mimeType !== google.MIME.arkusz) throw new Error('tabela montażowa jest plikiem Excela – aplikacja wpisuje tylko do Arkuszy Google');
+  try {
+    for (const cel of rekord.wiersze || []) {
+      const wiersze = await google.wartosciArkusza(tabela.id, cel.arkusz);
+      const nrWiersza = znajdzWiersz(wiersze, cel);
+      if (!nrWiersza) throw new Error(`nie znalazłem w tabeli wiersza „${cel.adres}” (arkusz ${cel.arkusz})`);
+      const { dane } = zmianyWiersza({ arkusz: cel.arkusz, wiersze, nrWiersza, odpowiedzi: rekord.tabela.odpowiedzi });
+      if (dane.length) await google.zapiszKomorki(tabela.id, dane);
+    }
+  } catch (blad) {
+    if (blad.status === 403) throw new Error('to konto nie może edytować tabeli montażowej – biuro musi dać uprawnienia „Edytujący”');
+    throw blad;
+  }
 }
 
 $('wyslij-kolejke').addEventListener('click', async () => {
@@ -548,6 +573,8 @@ async function ekranProtokol(idInwestycji, idAdresu, typ) {
   }
   rekord.wzor ||= wzor.id;
   rekord.zdjecia ||= [];
+  // Wiersze tabeli tego adresu i typu - do wpisania odpowiedzi z audytu.
+  rekord.wiersze = a.rekordy.filter(r => r.typ === typ).map(({ arkusz, wiersz, uid, adres }) => ({ arkusz, wiersz, uid, adres }));
   const otwarty = { rekord, szablon, zdjecia: new Map() };
   stan.protokol = otwarty;
   for (const z of rekord.zdjecia) {
@@ -728,12 +755,66 @@ $('wybierz-zdjecia').addEventListener('change', async e => {
   toast(`Dodano ${ileZdjec(dodane)}. Pójdą na Dysk po „Zapisz”.`, { typ: 'ok' });
 });
 
+// --- Dane do tabeli (PV) ---
+
+const wierszeArkusza = nazwa => stan.inwestycja?.arkusze.find(a => a.nazwa === nazwa)?.wiersze || [];
+
+function pytanieTabeli(p, odpowiedzi) {
+  const dopisek = el('input', {
+    class: 'dopisek',
+    placeholder: 'Jakie? (opcjonalnie)',
+    autocomplete: 'off',
+    value: odpowiedzi[p.id]?.dopisek || '',
+    oninput: e => { if (odpowiedzi[p.id]) odpowiedzi[p.id].dopisek = e.target.value.trim(); }
+  });
+  const przyciski = p.opcje.map(o => el('button', {
+    type: 'button',
+    class: p.id === 'rezygnacja' ? 'wybor grozny' : 'wybor',
+    // Drugie stuknięcie odznacza - wtedy komórka w tabeli zostaje bez zmian.
+    onclick: () => {
+      if (odpowiedzi[p.id]?.opcja === o.id) delete odpowiedzi[p.id];
+      else odpowiedzi[p.id] = { opcja: o.id, dopisek: o.dopisek ? dopisek.value.trim() : '' };
+      odswiez();
+    }
+  }, o.etykieta));
+  const odswiez = () => {
+    przyciski.forEach((b, i) => b.setAttribute('aria-pressed', String(odpowiedzi[p.id]?.opcja === p.opcje[i].id)));
+    dopisek.hidden = !p.opcje.find(o => o.id === odpowiedzi[p.id]?.opcja)?.dopisek;
+  };
+  odswiez();
+  return el('fieldset', { class: 'pytanie' }, el('legend', {}, p.pytanie), el('div', { class: 'wybory' }, przyciski), dopisek);
+}
+
+// Pytania pokazujemy tylko te, które mają kolumnę w tabeli; na start to, co
+// audytor zaznaczył wcześniej, a jeśli nic - to, co już jest w tabeli.
+// undefined: tabela nie ma żadnej z kolumn, null: audytor wrócił do protokołu.
+function zapytajOTabele(rekord) {
+  const cel = rekord.wiersze?.[0];
+  const wiersze = cel ? wierszeArkusza(cel.arkusz) : [];
+  const naglowek = znajdzNaglowek(wiersze);
+  const kolumny = naglowek ? kolumnyPytan(wiersze[naglowek.wiersz]) : {};
+  const pytania = PYTANIA_PV.filter(p => kolumny[p.id] !== undefined);
+  if (!pytania.length) return Promise.resolve(undefined);
+  const odpowiedzi = structuredClone(rekord.tabela?.odpowiedzi || odpowiedziZWiersza(wiersze, cel.wiersz));
+  wstaw($('pytania'), pytania.map(p => pytanieTabeli(p, odpowiedzi)));
+  const okno = $('dialog-tabela');
+  okno.returnValue = '';
+  okno.showModal();
+  okno.scrollTop = 0;
+  return new Promise(ok => okno.addEventListener('close', () => ok(okno.returnValue === 'ok' ? odpowiedzi : null), { once: true }));
+}
+
 // "Bartodzieje 21_PC.pdf" - tak jak dotychczasowe audyty w folderach projektów.
 const nazwaPliku = rekord => bezpiecznaNazwa(`${rekord.adres}_${SKROT_PLIKU[rekord.typ]}`) + '.pdf';
 
 $('zapisz-protokol').addEventListener('click', async () => {
   const otwarty = stan.protokol;
   if (!otwarty?.edytor) return;
+  if (otwarty.rekord.typ === 'pv_me') {
+    const odpowiedzi = await zapytajOTabele(otwarty.rekord);
+    if (odpowiedzi === null || stan.protokol !== otwarty) return;
+    if (odpowiedzi) otwarty.rekord.tabela = { odpowiedzi, wpisano: false };
+  }
   const przycisk = $('zapisz-protokol');
   przycisk.disabled = true;
   const trwa = toast('Zapisuję protokół…', { czas: 0 });
@@ -767,7 +848,8 @@ $('zapisz-protokol').addEventListener('click', async () => {
       trwa.remove();
       if (stan.protokol === otwarty) renderujZdjecia();
       const zdjecia = rekord.zdjecia.length ? ` + ${ileZdjec(rekord.zdjecia.length)}` : '';
-      toast(`Zapisano na Dysku: ${rekord.nazwaPliku}${zdjecia}`, { typ: 'ok', akcja: nastepny, czas: 8000 });
+      const tabela = rekord.tabela?.wpisano ? ', wpisano do tabeli' : '';
+      toast(`Zapisano na Dysku: ${rekord.nazwaPliku}${zdjecia}${tabela}`, { typ: 'ok', akcja: nastepny, czas: 8000 });
     } catch (blad) {
       console.error(blad);
       trwa.remove();

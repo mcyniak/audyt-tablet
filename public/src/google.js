@@ -66,7 +66,7 @@ async function api(url, opcje = {}, ponowienie = false) {
   if (!odp.ok) {
     let opis = `${odp.status}`;
     try { opis = (await odp.json()).error?.message || opis; } catch { /* odpowiedź bez JSON */ }
-    throw new Error(`Google: ${opis}`);
+    throw Object.assign(new Error(`Google: ${opis}`), { status: odp.status });
   }
   return odp;
 }
@@ -148,6 +148,23 @@ export async function odczytajTabele(tabela, czytajXlsx) {
   for (const n of nazwy) p.append('ranges', `'${n.replace(/'/g, "''")}'`);
   const wartosci = await (await api(`https://sheets.googleapis.com/v4/spreadsheets/${tabela.id}/values:batchGet?${p}`)).json();
   return zArkuszyGoogle(nazwy, wartosci.valueRanges);
+}
+
+// Jeden arkusz tabeli na świeżo - przed wpisaniem odpowiedzi z audytu
+// (biuro mogło w międzyczasie dopisać wiersze).
+export async function wartosciArkusza(idTabeli, nazwaArkusza) {
+  const p = new URLSearchParams({ valueRenderOption: 'UNFORMATTED_VALUE', majorDimension: 'ROWS' });
+  const zakres = encodeURIComponent(`'${nazwaArkusza.replace(/'/g, "''")}'`);
+  return (await (await api(`https://sheets.googleapis.com/v4/spreadsheets/${idTabeli}/values/${zakres}?${p}`)).json()).values || [];
+}
+
+// RAW: "tak" zostaje tekstem, true/false trafia do pól wyboru jako wartość logiczna.
+export async function zapiszKomorki(idTabeli, dane) {
+  await api(`https://sheets.googleapis.com/v4/spreadsheets/${idTabeli}/values:batchUpdate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ valueInputOption: 'RAW', data: dane })
+  });
 }
 
 export function zArkuszyGoogle(nazwy, zakresy) {

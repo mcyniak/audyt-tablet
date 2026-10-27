@@ -74,6 +74,21 @@ do 3000 px (wysyłka jednym zapytaniem przyjmuje do 5 MB).
 Nazwy i wzorce są w `public/config.js`. Dla pomp wzór gruntowy/powietrzny wybiera
 kolumna „rodzaj pompy” z tabeli.
 
+## Audyt PV → tabela montażowa
+
+Przy „Zapisz” protokołu PV wyskakuje okno z pytaniami (`public/src/ankieta.js`):
+miejsce montażu PV, miejsce magazynu energii, zwiększenie mocy umownej, prywatna
+instalacja PV, pokrycie dachowe, zmniejszenie mocy PV, usunięcie magazynu,
+rezygnacja. Odpowiedzi to przyciski, bez odczytywania pisma.
+
+- Pokazywane są tylko pytania, dla których tabela ma kolumnę (dopasowanie po nazwie).
+- Na start: poprzednie odpowiedzi audytora, a jeśli ich nie ma - to, co jest w tabeli.
+- Wpis po wysłaniu PDF-a, na świeżo pobranym arkuszu. Wiersz: zapamiętany numer,
+  a gdy się przesunął - po adresie (i UID); dwa pasujące wiersze = błąd, bez zgadywania.
+- Zmieniane są tylko komórki z inną odpowiedzią, pisownią używaną już w tej
+  kolumnie („mieszkalny” / „Dach budynku mieszkalnego”, true/false w polach wyboru).
+- Tylko Arkusze Google (nie .xlsx); konto audytora musi mieć prawo edycji tabeli.
+
 ## Etapy
 
 1. ✅ Szkielet, wczytanie tabeli, rozpoznanie arkuszy, lista adresów.

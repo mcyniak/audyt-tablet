@@ -103,7 +103,7 @@ function indeksKolumn(wierszNaglowka) {
   return indeks;
 }
 
-function znajdzNaglowek(wiersze) {
+export function znajdzNaglowek(wiersze) {
   for (let i = 0; i < Math.min(wiersze.length, 20); i += 1) {
     const indeks = indeksKolumn(wiersze[i] || []);
     if (indeks.adres !== undefined) return { wiersz: i, indeks };

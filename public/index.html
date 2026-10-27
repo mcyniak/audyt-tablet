@@ -128,6 +128,20 @@
     </form>
   </dialog>
 
+  <!-- Audyt PV: odpowiedzi wpisywane do tabeli montażowej przy zapisie -->
+  <dialog id="dialog-tabela" class="arkusz arkusz-szeroki">
+    <div class="uchwyt"></div>
+    <form method="dialog">
+      <h2>Dane do tabeli</h2>
+      <p class="arkusz-opis">Zaznaczone odpowiedzi trafią do tabeli montażowej. Pytania bez zaznaczenia zostają w tabeli bez zmian.</p>
+      <div id="pytania"></div>
+      <div class="przyciski">
+        <button type="submit" value="anuluj" class="btn btn-szary">Wróć</button>
+        <button type="submit" value="ok" class="btn btn-glowny">Zapisz protokół</button>
+      </div>
+    </form>
+  </dialog>
+
   <script src="vendor/xlsx.full.min.js"></script>
   <script src="vendor/fontkit.umd.min.js"></script>
   <script type="module" src="app.js"></script>
