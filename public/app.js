@@ -1,29 +1,34 @@
 import * as pdfjs from './vendor/pdf.min.mjs';
-import { TYPY, normalizuj, rozpoznajTypArkusza, zbudujListeAdresow } from './src/tabela.js';
-import { odczytaj, zapisz, wszystkie } from './src/magazyn.js';
+import { TYPY, normalizuj, zbudujListeAdresow } from './src/tabela.js';
+import { odczytaj, zapisz, usun, wszystkie } from './src/magazyn.js';
 import { wyliczWpisy, tekstSzablonu } from './src/wypelnianie.js';
 import { utworzEdytor } from './src/edytor.js';
 import { zbudujPdf } from './src/eksport.js';
+import { wybierzWzor } from './src/wzory.js';
 import * as google from './src/google.js';
+import { DYSK } from './config.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.mjs';
 
-// Stan aplikacji. "inwestycja" i audyty przeżywają zamknięcie aplikacji
-// (IndexedDB), reszta to stan widoku.
+const TYP = Object.fromEntries(TYPY.map(t => [t.id, t]));
+const SKROT_PLIKU = { pompy: 'PC', pv_me: 'PV', solary: 'KOLEKTORY', kotly: 'KOTŁY' };
+
+// Stan aplikacji. Lista inwestycji, otwarte inwestycje (tabela + wzory) i
+// protokoły są w IndexedDB - aplikacja działa w terenie bez internetu.
 const stan = {
-  // { nazwa, zrodlo: { rodzaj: 'google'|'plik', id?, nazwa }, arkusze: [{ nazwa, wiersze }],
-  //   przypisania, szablony: { typ: idSzablonu }, folder: { id, nazwa } }
-  inwestycja: null,
-  wynik: null, // wynik zbudujListeAdresow
-  audyty: new Map(), // klucz audytu -> { status, zmieniono }
+  inwestycje: [], // [{ id, nazwa, tabela, razem }] - foldery z INWESTYCJE_3
+  ostatnie: [], // id ostatnio otwieranych inwestycji
+  inwestycja: null, // otwarta: { id, nazwa, tabela, arkusze, wzory, folderWzorow, pobrano }
+  wynik: null, // zbudujListeAdresow dla otwartej inwestycji
+  audyty: new Map(), // klucz protokołu -> { status, inwestycja }
+  szukajInwestycji: '',
+  szukajAdresu: '',
   filtrTypu: null,
-  szukaj: '',
   pokazRezygnacje: false,
-  audyt: null // otwarty protokół: { rekord, edytor, dokument, strony, szablon }
+  protokol: null // otwarty protokół: { rekord, edytor, dokument, strony, szablon }
 };
 
 const $ = id => document.getElementById(id);
-const TYP = Object.fromEntries(TYPY.map(t => [t.id, t]));
 
 // Budowanie DOM bez innerHTML - dane z arkuszy trafiają tylko do textContent.
 function el(tag, wlasciwosci = {}, ...dzieci) {
@@ -35,326 +40,358 @@ function el(tag, wlasciwosci = {}, ...dzieci) {
     else if (k in e && typeof v !== 'string') e[k] = v;
     else e.setAttribute(k, v === true ? '' : v);
   }
-  for (const d of dzieci.flat()) if (d !== null && d !== undefined && d !== false) e.append(d);
+  wstaw(e, dzieci, false);
   return e;
 }
 
-const znaczekTypu = typ => el('span', { class: `znaczek ${typ}`, title: TYP[typ].etykieta }, TYP[typ].skrot);
+// replaceChildren/append wypisałyby "false" dla warunkowych elementów (a && el(...)).
+function wstaw(kontener, dzieci, zastap = true) {
+  const elementy = dzieci.flat().filter(d => d !== null && d !== undefined && d !== false && d !== '');
+  if (zastap) kontener.replaceChildren(...elementy);
+  else kontener.append(...elementy);
+}
 
-// --- Nawigacja: hash, żeby systemowy przycisk "wstecz" Androida działał ---
+// Stałe ikony (bez danych użytkownika).
+const SVG = {
+  strzalka: '<path d="M9 5l7 7-7 7"/>',
+  ok: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  wysylka: '<path d="M12 19V6M6 11l6-6 6 6"/>',
+  szkic: '<path d="M4 20h4L19 9l-4-4L4 16z"/>'
+};
+function ikona(nazwa, klasa = '') {
+  const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  s.setAttribute('viewBox', '0 0 24 24');
+  s.setAttribute('aria-hidden', 'true');
+  if (klasa) s.setAttribute('class', klasa);
+  s.innerHTML = SVG[nazwa];
+  return s;
+}
 
-const EKRANY = ['ekran-tabela', 'ekran-adresy', 'ekran-adres', 'ekran-audyt'];
+const OPIS_STATUSU = { wyslany: 'Na Dysku', zapisany: 'Czeka na wysyłkę', szkic: 'Rozpoczęty' };
+function znaczekStatusu(status) {
+  if (!status) return null;
+  return el('span', { class: `status ${status}`, title: OPIS_STATUSU[status] }, ikona({ wyslany: 'ok', zapisany: 'wysylka', szkic: 'szkic' }[status]));
+}
 
-function pokazEkran(id, tytul) {
+// "GALEWICE 2026 - PC_SOL_ME_PV_KOTŁY" -> ["GALEWICE 2026", "PC_SOL_ME_PV_KOTŁY"]
+function rozbijNazwe(nazwa) {
+  const [glowna, ...reszta] = nazwa.split(/\s+-\s+/);
+  return [glowna.trim(), reszta.join(' - ')];
+}
+
+// --- Ekrany i nawigacja (hash, żeby systemowy "wstecz" Androida działał) ---
+
+const EKRANY = ['ekran-start', 'ekran-inwestycje', 'ekran-adresy', 'ekran-protokol'];
+
+function pokazEkran(id, tytul, podtytul = '', { odswiez = false } = {}) {
   for (const e of EKRANY) $(e).hidden = e !== id;
-  document.body.classList.toggle('tryb-audyt', id === 'ekran-audyt');
+  document.body.classList.toggle('tryb-protokol', id === 'ekran-protokol');
   $('tytul').textContent = tytul;
-  $('wstecz').hidden = id === 'ekran-tabela';
+  $('podtytul').textContent = podtytul;
+  $('wstecz').hidden = id === 'ekran-start' || id === 'ekran-inwestycje';
+  $('odswiez').hidden = !odswiez;
   window.scrollTo(0, 0);
 }
 
-const znajdzAdres = id => stan.wynik?.adresy.find(a => a.id === id);
-
-function trasa() {
-  const hash = location.hash.slice(1);
-  const [ekran, ...parametry] = hash.split('/').map(decodeURIComponent);
-  if (ekran !== 'audyt') zamknijAudyt();
-  if (ekran === 'adresy' && stan.wynik) return renderujAdresy();
-  if (ekran === 'adres' && znajdzAdres(parametry[0])) return renderujAdres(znajdzAdres(parametry[0]));
-  if (ekran === 'audyt' && znajdzAdres(parametry[0]) && TYP[parametry[1]]) return otworzAudyt(znajdzAdres(parametry[0]), parametry[1]);
-  renderujTabele();
+async function trasa() {
+  const [ekran, ...p] = location.hash.slice(1).split('/').map(decodeURIComponent);
+  if (ekran !== 'p') zamknijProtokol();
+  try {
+    if (ekran === 'i') return await ekranAdresy(p[0]);
+    if (ekran === 'p') return await ekranProtokol(p[0], p[1], p[2]);
+    return await ekranInwestycje();
+  } catch (blad) {
+    console.error(blad);
+    alert(blad.message);
+  }
 }
-
-const kluczAudytu = (adres, typ) => `${stan.inwestycja.nazwa}|${adres.id}|${typ}`;
 
 window.addEventListener('hashchange', trasa);
 $('wstecz').addEventListener('click', () => history.back());
 
-// --- Ekran 1: tabela montażowa ---
+// --- Logowanie ---
 
-function nazwaInwestycji(nazwaPliku) {
-  // "MIASTO 2025 - TAB. MONTAŻOWA - solary, pompy, PV, ME.xlsx" -> "MIASTO 2025"
-  // "tabela adresowa Miasto.xlsx" -> "Miasto"
-  const bezRozszerzenia = nazwaPliku.replace(/\.[^.]+$/, '');
-  return bezRozszerzenia.split(/\s+-\s+tab/i)[0].replace(/^tabela (adresowa|montażowa)\s+/i, '').trim() || bezRozszerzenia;
-}
-
-async function wczytajPlik(plik) {
-  $('blad-tabeli').hidden = true;
+$('zaloguj').addEventListener('click', async () => {
+  $('blad-logowania').hidden = true;
   try {
-    const wb = window.XLSX.read(await plik.arrayBuffer(), { type: 'array' });
-    const arkusze = wb.SheetNames.map(nazwa => ({
-      nazwa,
-      // Surowe wartości: sformatowane zamieniłyby telefon 500100200 w "500,100,200".
-      wiersze: window.XLSX.utils.sheet_to_json(wb.Sheets[nazwa], { header: 1, defval: null, blankrows: false })
-    }));
-    await ustawNowaTabele(nazwaInwestycji(plik.name), { rodzaj: 'plik', nazwa: plik.name }, arkusze);
+    await google.zaloguj();
+    await pobierzInwestycje();
+    ekranInwestycje();
   } catch (blad) {
-    pokazBladTabeli(`Nie udało się odczytać pliku: ${blad.message}`);
+    $('blad-logowania').textContent = blad.message;
+    $('blad-logowania').hidden = false;
   }
-}
-
-function pokazBladTabeli(tekst) {
-  if (tekst) console.error(tekst);
-  $('blad-tabeli').textContent = tekst || '';
-  $('blad-tabeli').hidden = !tekst;
-}
-
-// Szablony, folder i ręczne przypisania arkuszy zostają przy wczytaniu
-// nowszej wersji tej samej tabeli (np. "Odśwież z Dysku").
-async function ustawNowaTabele(nazwa, zrodlo, arkusze) {
-  const poprzednia = stan.inwestycja?.nazwa === nazwa ? stan.inwestycja : {};
-  await ustawInwestycje({
-    nazwa,
-    zrodlo,
-    arkusze,
-    przypisania: poprzednia.przypisania || {},
-    szablony: poprzednia.szablony || {},
-    folder: poprzednia.folder || null
-  });
-  renderujTabele();
-}
-
-async function wczytajZGoogle(idArkusza) {
-  pokazBladTabeli('');
-  const przycisk = $('z-drive');
-  przycisk.disabled = true;
-  try {
-    const plik = idArkusza ? { id: idArkusza } : await google.wybierzTabele();
-    if (!plik) return;
-    const { tytul, arkusze } = await google.odczytajTabele(plik.id);
-    await ustawNowaTabele(nazwaInwestycji(tytul), { rodzaj: 'google', id: plik.id, nazwa: tytul }, arkusze);
-  } catch (blad) {
-    pokazBladTabeli(`Nie udało się wczytać tabeli z Dysku: ${blad.message}`);
-  } finally {
-    przycisk.disabled = false;
-  }
-}
-
-$('z-drive').addEventListener('click', () => {
-  if (!google.skonfigurowany()) { pokazBladTabeli('Połączenie z Google nie jest jeszcze skonfigurowane (config.js).'); return; }
-  if (!navigator.onLine) { pokazBladTabeli('Brak internetu – tabelę z Dysku wczytasz, gdy będzie zasięg.'); return; }
-  wczytajZGoogle();
 });
-$('odswiez-tabele').addEventListener('click', () => wczytajZGoogle(stan.inwestycja?.zrodlo?.id));
 
-async function ustawInwestycje(inwestycja) {
+// --- Inwestycje ---
+
+async function pobierzInwestycje() {
+  const lista = await google.listaInwestycji(DYSK.inwestycje);
+  const razem = new Map(stan.inwestycje.map(i => [i.id, i.razem]));
+  stan.inwestycje = lista.map(i => ({ ...i, razem: razem.get(i.id) }));
+  await zapisz('ustawienia', 'inwestycje', stan.inwestycje);
+}
+
+// Ile adresów inwestycji ma już zapisany protokół.
+function zrobione(idInwestycji) {
+  const adresy = new Set();
+  for (const [klucz, a] of stan.audyty) {
+    if (a.inwestycja === idInwestycji && (a.status === 'zapisany' || a.status === 'wyslany')) adresy.add(klucz.split('|')[1]);
+  }
+  return adresy.size;
+}
+
+async function ekranInwestycje() {
+  if (!stan.inwestycje.length) {
+    if (!navigator.onLine) {
+      pokazEkran('ekran-inwestycje', 'Inwestycje');
+      pokazInfo('info-inwestycje', 'Brak internetu, a na tym tablecie nie ma jeszcze zapisanych inwestycji.');
+      return;
+    }
+    if (!google.zalogowany()) { pokazEkran('ekran-start', 'Audyt'); return; }
+    pokazEkran('ekran-inwestycje', 'Inwestycje');
+    pokazInfo('info-inwestycje', 'Wczytuję inwestycje z Dysku…');
+    await pobierzInwestycje();
+  }
+  pokazEkran('ekran-inwestycje', 'Inwestycje', DYSK.inwestycje, { odswiez: true });
+  pokazInfo('info-inwestycje', '');
+  renderujInwestycje();
+}
+
+function wierszInwestycji(inw) {
+  const [glowna, dodatkowa] = rozbijNazwe(inw.nazwa);
+  const ile = zrobione(inw.id);
+  return el('li', {}, el('button', { type: 'button', onclick: () => { location.hash = `i/${encodeURIComponent(inw.id)}`; } },
+    el('span', { class: 'tresc' }, el('span', { class: 'glowna' }, glowna), dodatkowa && el('span', { class: 'dodatkowa' }, dodatkowa)),
+    el('span', { class: 'prawa' }, inw.razem ? el('span', { class: 'postep' }, `${ile} / ${inw.razem}`) : null, ikona('strzalka', 'strzalka'))
+  ));
+}
+
+function renderujInwestycje() {
+  const fraza = normalizuj(stan.szukajInwestycji);
+  const wszystkie = [...stan.inwestycje].sort((a, b) => a.nazwa.localeCompare(b.nazwa, 'pl', { numeric: true }));
+  const kontener = $('lista-inwestycji');
+  if (fraza) {
+    const wyniki = wszystkie.filter(i => normalizuj(i.nazwa).includes(fraza));
+    kontener.replaceChildren(wyniki.length ? el('ul', { class: 'lista' }, wyniki.map(wierszInwestycji)) : el('p', { class: 'pusto' }, 'Brak inwestycji o tej nazwie.'));
+    return;
+  }
+  const ostatnie = stan.ostatnie.map(id => stan.inwestycje.find(i => i.id === id)).filter(Boolean).slice(0, 4);
+  wstaw(kontener, [
+    ostatnie.length > 0 && el('h2', { class: 'naglowek-sekcji' }, 'Ostatnio otwierane'),
+    ostatnie.length > 0 && el('ul', { class: 'lista' }, ostatnie.map(wierszInwestycji)),
+    el('h2', { class: 'naglowek-sekcji' }, `Wszystkie inwestycje (${wszystkie.length})`),
+    el('ul', { class: 'lista' }, wszystkie.map(wierszInwestycji))
+  ]);
+}
+
+$('szukaj-inwestycji').addEventListener('input', e => { stan.szukajInwestycji = e.target.value; renderujInwestycje(); });
+
+function pokazInfo(id, tekst, ...dzieci) {
+  $(id).replaceChildren(tekst, ...dzieci);
+  $(id).hidden = !tekst;
+}
+
+// --- Otwarcie inwestycji: tabela montażowa + wzory, zapamiętane na offline ---
+
+const czytajXlsx = bajty => {
+  const wb = window.XLSX.read(bajty, { type: 'array' });
+  return wb.SheetNames.map(nazwa => ({ nazwa, wiersze: window.XLSX.utils.sheet_to_json(wb.Sheets[nazwa], { header: 1, defval: null, blankrows: false }) }));
+};
+
+async function pobierzInwestycje1(wpis) {
+  const [folder, arkusze] = await Promise.all([
+    google.folderInwestycji(wpis.id, DYSK),
+    google.odczytajTabele(wpis.tabela, czytajXlsx)
+  ]);
+  // Wzory od razu do pamięci tabletu - w terenie może nie być zasięgu.
+  for (const w of folder.wzory) {
+    const zapisany = await odczytaj('szablony', w.id);
+    if (zapisany?.modifiedTime !== w.modifiedTime) await zapisz('szablony', w.id, { nazwa: w.nazwa, modifiedTime: w.modifiedTime, bajty: await google.pobierzPlik(w) });
+  }
+  const inwestycja = { id: wpis.id, nazwa: wpis.nazwa, tabela: wpis.tabela, arkusze, ...folder, pobrano: new Date().toISOString() };
+  await zapisz('inwestycje', wpis.id, inwestycja);
+  return inwestycja;
+}
+
+async function zaladujInwestycje(id, { odswiez = false } = {}) {
+  if (stan.inwestycja?.id === id && !odswiez) return;
+  const wpis = stan.inwestycje.find(i => i.id === id);
+  let inwestycja = await odczytaj('inwestycje', id);
+  let ostrzezenie = '';
+  if (wpis && navigator.onLine && (odswiez || !inwestycja)) {
+    pokazEkran('ekran-adresy', rozbijNazwe(wpis.nazwa)[0], 'Wczytuję tabelę i wzory…');
+    $('lista-adresow').replaceChildren();
+    try {
+      inwestycja = await pobierzInwestycje1(wpis);
+    } catch (blad) {
+      if (!inwestycja) throw blad;
+      ostrzezenie = `Nie udało się odświeżyć z Dysku (${blad.message}) – pokazuję wersję zapisaną w tablecie.`;
+    }
+  }
+  if (!inwestycja) throw new Error('Tej inwestycji nie ma jeszcze w tablecie. Otwórz ją raz z internetem.');
   stan.inwestycja = inwestycja;
-  stan.wynik = zbudujListeAdresow(inwestycja.arkusze, inwestycja.przypisania);
-  try {
-    await zapisz('inwestycje', 'biezaca', inwestycja);
-  } catch (blad) {
-    // Bez pamięci (np. tryb prywatny) aplikacja działa dalej, tylko nie
-    // zapamięta tabeli do następnego uruchomienia.
-    console.warn('Nie zapisano tabeli w pamięci tabletu', blad);
-  }
+  stan.wynik = zbudujListeAdresow(inwestycja.arkusze);
+  stan.filtrTypu = null;
+  stan.szukajAdresu = '';
+  $('szukaj-adresu').value = '';
+  stan.ostrzezenieOdswiezania = ostrzezenie;
+
+  stan.ostatnie = [id, ...stan.ostatnie.filter(x => x !== id)].slice(0, 10);
+  if (wpis) wpis.razem = stan.wynik.adresy.filter(a => !a.rezygnacja).length;
+  await zapisz('ustawienia', 'ostatnie', stan.ostatnie);
+  await zapisz('ustawienia', 'inwestycje', stan.inwestycje);
 }
 
-$('z-pliku').addEventListener('change', e => {
-  const plik = e.target.files[0];
-  e.target.value = '';
-  if (plik) wczytajPlik(plik);
-});
+// --- Adresy ---
 
-function renderujTabele() {
-  pokazEkran('ekran-tabela', 'Audyt');
-  const karta = $('karta-arkusze');
-  if (!stan.wynik) { karta.hidden = true; return; }
-  karta.hidden = false;
-  $('nazwa-inwestycji').textContent = stan.inwestycja.nazwa;
-  const zrodlo = stan.inwestycja.zrodlo || {};
-  $('zrodlo-tabeli').textContent = zrodlo.rodzaj === 'google' ? `Dysk Google: ${zrodlo.nazwa}` : `Plik: ${zrodlo.nazwa || '—'}`;
-  $('odswiez-tabele').hidden = zrodlo.rodzaj !== 'google';
-  $('folder-protokolow').textContent = stan.inwestycja.folder?.nazwa || 'nie wybrano – protokoły zostaną w tablecie';
-  $('folder-protokolow').classList.toggle('brak', !stan.inwestycja.folder);
-
-  const opcje = [{ id: '', etykieta: '— pomiń —' }, ...TYPY];
-  const wierszArkusza = arkusz => {
-    const select = el('select', {
-      'aria-label': `Typ arkusza ${arkusz.nazwa}`,
-      onchange: e => zmienPrzypisanie(arkusz.nazwa, e.target.value || null)
-    }, opcje.map(o => el('option', { value: o.id, selected: (arkusz.typ || '') === o.id }, o.etykieta)));
-    let info = null;
-    if (arkusz.blad) info = el('span', { class: 'info blad' }, arkusz.blad);
-    else if (arkusz.typ) info = el('span', { class: 'info' }, `${arkusz.liczbaAdresow} adresów${arkusz.typ !== arkusz.auto ? ' · zmienione ręcznie' : ''}`);
-    return el('li', {}, el('span', { class: 'nazwa' }, arkusz.nazwa), select, info);
-  };
-  // Pominięte arkusze (protokoły, ekipy, umowa...) zwinięte, żeby nie
-  // zasłaniały tych ważnych - ale da się je rozwinąć i przypisać ręcznie.
-  const uzyte = stan.wynik.arkusze.filter(a => a.typ);
-  const pominiete = stan.wynik.arkusze.filter(a => !a.typ);
-  $('lista-arkuszy').replaceChildren(...uzyte.map(wierszArkusza));
-  if (pominiete.length > 0) {
-    $('lista-arkuszy').append(el('li', { class: 'pominiete' },
-      el('details', {},
-        el('summary', {}, `Pominięte arkusze (${pominiete.length})`),
-        el('ul', { class: 'arkusze' }, pominiete.map(wierszArkusza))
-      )
-    ));
-  }
-
-  // Szablon dla każdego typu instalacji, który występuje w tabeli.
-  const szablony = stan.inwestycja.szablony || {};
-  $('lista-szablonow').replaceChildren(...TYPY.filter(t => stan.wynik.liczniki[t.id] > 0).map(t => el('li', {},
-    znaczekTypu(t.id),
-    el('span', { class: 'nazwa' }, t.etykieta),
-    el('span', { class: szablony[t.id] ? 'plik' : 'plik brak' }, szablony[t.id]?.split('|')[0] || 'brak szablonu'),
-    el('button', { type: 'button', class: 'maly', onclick: () => wybierzSzablon(t.id) }, szablony[t.id] ? 'Zmień' : 'Wczytaj PDF')
-  )));
-
-  const { razem } = stan.wynik;
-  $('pokaz-adresy').textContent = razem ? `Pokaż adresy (${razem})` : 'Brak adresów – przypisz arkusze';
-  $('pokaz-adresy').disabled = !razem;
+async function ekranAdresy(id) {
+  await zaladujInwestycje(id);
+  renderujAdresy();
 }
 
-// Szablon z Dysku Google (gdy skonfigurowany i jest internet), inaczej z pliku na tablecie.
-let typWybieranegoSzablonu = null;
-async function wybierzSzablon(typ) {
-  typWybieranegoSzablonu = typ;
-  if (!google.skonfigurowany() || !navigator.onLine) { $('plik-szablonu').click(); return; }
-  try {
-    const plik = await google.wybierzSzablon();
-    if (plik) await zapamietajSzablon(typ, `${plik.name}|${plik.id}`, plik.name, await google.pobierzPlik(plik.id));
-  } catch (blad) {
-    alert(`Nie udało się wczytać szablonu z Dysku: ${blad.message}`);
-  }
-  renderujTabele();
-}
+const kluczProtokolu = (adres, typ) => `${stan.inwestycja.id}|${adres.id}|${typ}`;
+const statusAdresu = a => {
+  const s = a.typy.map(typ => stan.audyty.get(kluczProtokolu(a, typ))?.status);
+  if (s.every(x => x === 'wyslany')) return 'wyslany';
+  if (s.every(x => x === 'wyslany' || x === 'zapisany')) return 'zapisany';
+  return s.some(Boolean) ? 'szkic' : null;
+};
 
-async function zapamietajSzablon(typ, id, nazwa, bajty) {
-  // Sprawdzenie, czy to w ogóle da się otworzyć, zanim zapamiętamy.
-  await pdfjs.getDocument({ data: new Uint8Array(bajty.slice(0)) }).promise;
-  await zapisz('szablony', id, { nazwa, bajty });
-  await ustawInwestycje({ ...stan.inwestycja, szablony: { ...stan.inwestycja.szablony, [typ]: id } });
-}
-
-$('plik-szablonu').addEventListener('change', async e => {
-  const plik = e.target.files[0];
-  e.target.value = '';
-  if (!plik || !typWybieranegoSzablonu) return;
-  try {
-    await zapamietajSzablon(typWybieranegoSzablonu, `${plik.name}|${plik.size}`, plik.name, await plik.arrayBuffer());
-  } catch (blad) {
-    console.error(blad);
-    alert(`Nie udało się wczytać szablonu: ${blad.message}`);
-  }
-  renderujTabele();
-});
-
-$('wybierz-folder').addEventListener('click', async () => {
-  if (!google.skonfigurowany()) { alert('Połączenie z Google nie jest jeszcze skonfigurowane.'); return; }
-  if (!navigator.onLine) { alert('Brak internetu – folder wybierzesz, gdy będzie zasięg.'); return; }
-  try {
-    const folder = await google.wybierzFolder();
-    if (folder) await ustawInwestycje({ ...stan.inwestycja, folder: { id: folder.id, nazwa: folder.name } });
-  } catch (blad) {
-    alert(`Nie udało się wybrać folderu: ${blad.message}`);
-  }
-  renderujTabele();
-});
-
-async function zmienPrzypisanie(nazwaArkusza, typ) {
-  const przypisania = { ...stan.inwestycja.przypisania };
-  if (typ === rozpoznajTypArkusza(nazwaArkusza)) delete przypisania[nazwaArkusza];
-  else przypisania[nazwaArkusza] = typ;
-  await ustawInwestycje({ ...stan.inwestycja, przypisania });
-  renderujTabele();
-}
-
-$('pokaz-adresy').addEventListener('click', () => { location.hash = 'adresy'; });
-
-// --- Ekran 2: lista adresów ---
-
-function tekstDoSzukania(a) {
-  return normalizuj([a.adres, ...a.warianty, a.nazwisko, a.telefon, a.obreb].join(' '));
+function brakujaceWzory() {
+  const inw = stan.inwestycja;
+  if (!inw.folderWzorow) return `W tej inwestycji nie ma folderu „Wzory audytów”. Poproś biuro o wrzucenie wzorów protokołów.`;
+  const typy = TYPY.filter(t => stan.wynik.liczniki[t.id] > 0);
+  const brak = typy.filter(t => t.id === 'pompy'
+    ? !wybierzWzor(inw.wzory, 'pompy', 'grunt') && !wybierzWzor(inw.wzory, 'pompy', 'powietrze')
+    : !wybierzWzor(inw.wzory, t.id));
+  return brak.length ? `Brak wzoru protokołu dla: ${brak.map(t => t.etykieta).join(', ')} (folder „${inw.folderWzorow.nazwa}”).` : '';
 }
 
 function renderujAdresy() {
-  pokazEkran('ekran-adresy', stan.inwestycja.nazwa);
-  // Liczniki zgodne z tym, co widać na liście - bez rezygnacji, chyba że
-  // audytor je włączył.
-  const adresy = stan.wynik.adresy.filter(a => stan.pokazRezygnacje || !a.rezygnacja);
-  const razem = adresy.length;
-  const liczniki = Object.fromEntries(TYPY.map(t => [t.id, adresy.filter(a => a.typy.includes(t.id)).length]));
+  const inw = stan.inwestycja;
+  const [glowna] = rozbijNazwe(inw.nazwa);
+  const aktywne = stan.wynik.adresy.filter(a => !a.rezygnacja);
+  pokazEkran('ekran-adresy', glowna, `${aktywne.length} adresów · zrobione ${zrobione(inw.id)}`, { odswiez: true });
 
-  const chip = (id, etykieta, liczba) => el('button', {
-    type: 'button',
-    class: `licznik${id ? '' : ' razem'}`,
-    'aria-pressed': String(stan.filtrTypu === id),
-    onclick: () => { stan.filtrTypu = id; renderujAdresy(); }
-  }, `${etykieta} `, el('b', {}, String(liczba)));
-  $('liczniki').replaceChildren(
-    chip(null, 'Razem', razem),
-    ...TYPY.filter(t => liczniki[t.id] > 0).map(t => chip(t.id, t.etykieta, liczniki[t.id]))
-  );
+  const typy = TYPY.filter(t => stan.wynik.liczniki[t.id] > 0);
+  const filtr = (id, etykieta) => el('button', { type: 'button', 'aria-pressed': String(stan.filtrTypu === id), onclick: () => { stan.filtrTypu = id; renderujAdresy(); } }, etykieta);
+  $('filtry').replaceChildren(...(typy.length > 1 ? [filtr(null, 'Wszystkie'), ...typy.map(t => filtr(t.id, t.etykieta))] : []));
 
-  const fraza = normalizuj(stan.szukaj);
-  const widoczne = adresy.filter(a =>
+  pokazInfo('info-adresy', stan.ostrzezenieOdswiezania || brakujaceWzory());
+
+  const fraza = normalizuj(stan.szukajAdresu);
+  const widoczne = stan.wynik.adresy.filter(a =>
+    (stan.pokazRezygnacje || !a.rezygnacja) &&
     (!stan.filtrTypu || a.typy.includes(stan.filtrTypu)) &&
-    (!fraza || tekstDoSzukania(a).includes(fraza))
+    (!fraza || normalizuj([a.adres, ...a.warianty, a.nazwisko, a.telefon].join(' ')).includes(fraza))
   );
-
+  const wieleTypow = typy.length > 1;
   $('lista-adresow').replaceChildren(...widoczne.map(a => el('li', {},
-    el('button', { type: 'button', class: a.rezygnacja ? 'zrezygnowal' : null, onclick: () => { location.hash = 'adres/' + encodeURIComponent(a.id); } },
-      el('span', { class: 'adres' }, a.adres),
-      el('span', { class: 'znaczki' },
-        a.typy.map(znaczekTypu),
-        a.rezygnacja && el('span', { class: 'znaczek rez' }, 'REZ'),
-        a.warianty.length > 1 && el('span', { class: 'znaczek uwaga', title: 'Różne zapisy adresu w arkuszach' }, '!'),
-        znaczekStatusu(a)
+    el('button', { type: 'button', class: a.rezygnacja ? 'zrezygnowal' : null, onclick: () => wybierzAdres(a) },
+      el('span', { class: 'tresc' },
+        el('span', { class: 'glowna' }, a.adres),
+        el('span', { class: 'dodatkowa' }, [a.rezygnacja ? 'rezygnacja' : '', a.nazwisko].filter(Boolean).join(' · '))
       ),
-      el('span', { class: 'osoba' }, [a.nazwisko, a.telefon].filter(Boolean).join(' · '))
+      el('span', { class: 'prawa' }, wieleTypow && a.typy.map(t => el('span', { class: 'typ' }, TYP[t].skrot)), znaczekStatusu(statusAdresu(a)))
     )
   )));
-  $('brak-wynikow').hidden = widoczne.length > 0;
+  $('brak-adresow').hidden = widoczne.length > 0;
+
+  const rezygnacje = stan.wynik.adresy.length - aktywne.length;
+  $('pokaz-rezygnacje').hidden = rezygnacje === 0;
+  $('pokaz-rezygnacje').textContent = stan.pokazRezygnacje ? 'Ukryj rezygnacje' : `Pokaż rezygnacje (${rezygnacje})`;
   pokazKolejke();
 }
 
-// ✔ wszystkie protokoły pod adresem na Dysku, ⇡ zapisane w tablecie i czekają
-// na wysyłkę, ✎ coś rozpoczęte.
-function znaczekStatusu(a) {
-  const statusy = a.typy.map(typ => stan.audyty.get(kluczAudytu(a, typ))?.status);
-  if (statusy.every(s => s === 'wyslany')) return el('span', { class: 'znaczek gotowe', title: 'Protokół na Dysku Google' }, '✔');
-  if (statusy.every(s => s === 'wyslany' || s === 'zapisany')) return el('span', { class: 'znaczek czeka', title: 'Zapisany w tablecie, czeka na wysyłkę' }, '⇡');
-  if (statusy.some(Boolean)) return el('span', { class: 'znaczek szkic', title: 'Protokół rozpoczęty' }, '✎');
-  return null;
+$('szukaj-adresu').addEventListener('input', e => { stan.szukajAdresu = e.target.value; renderujAdresy(); });
+$('pokaz-rezygnacje').addEventListener('click', () => { stan.pokazRezygnacje = !stan.pokazRezygnacje; renderujAdresy(); });
+
+$('odswiez').addEventListener('click', async () => {
+  if (!navigator.onLine) { alert('Brak internetu.'); return; }
+  try {
+    if (!$('ekran-adresy').hidden && stan.inwestycja) {
+      await zaladujInwestycje(stan.inwestycja.id, { odswiez: true });
+      renderujAdresy();
+    } else {
+      await pobierzInwestycje();
+      renderujInwestycje();
+    }
+  } catch (blad) {
+    alert(`Nie udało się odświeżyć: ${blad.message}`);
+  }
+});
+
+function wybierzAdres(a) {
+  const otworz = typ => { location.hash = `p/${encodeURIComponent(stan.inwestycja.id)}/${encodeURIComponent(a.id)}/${typ}`; };
+  if (a.typy.length === 1) { otworz(a.typy[0]); return; }
+  // Kilka instalacji pod adresem - osobny protokół dla każdej.
+  $('dialog-typ-tytul').textContent = a.adres;
+  $('dialog-typ-opcje').replaceChildren(...a.typy.map(typ => {
+    const status = stan.audyty.get(kluczProtokolu(a, typ))?.status;
+    return el('button', { type: 'button', class: 'duzy', onclick: () => { $('dialog-typ').close(); otworz(typ); } },
+      `Protokół – ${TYP[typ].etykieta}`, el('small', {}, OPIS_STATUSU[status] || 'nowy'));
+  }));
+  $('dialog-typ').showModal();
 }
 
-// --- Wysyłka na Dysk Google ---
+// --- Wysyłka na Dysk ---
 
-const czekajaceNaWysylke = () => [...stan.audyty].filter(([klucz, a]) => a.status === 'zapisany' && klucz.startsWith(`${stan.inwestycja.nazwa}|`)).map(([klucz]) => klucz);
+const czekajace = () => [...stan.audyty].filter(([, a]) => a.status === 'zapisany' && a.inwestycja === stan.inwestycja?.id).map(([k]) => k);
 
 function pokazKolejke() {
-  const ile = stan.inwestycja ? czekajaceNaWysylke().length : 0;
+  const ile = czekajace().length;
   $('kolejka').hidden = ile === 0;
   if (!ile) return;
-  const folder = stan.inwestycja.folder;
-  $('kolejka-opis').textContent = `${ile} ${ile === 1 ? 'protokół czeka' : 'protokoły(-ów) czekają'} na wysyłkę${folder ? '' : ' – najpierw wybierz folder na ekranie tabeli'}.`;
-  $('wyslij-kolejke').disabled = !folder || !navigator.onLine || !google.skonfigurowany();
+  $('kolejka-opis').textContent = `${ile} ${ile === 1 ? 'protokół czeka' : 'protokoły czekają'} na wysyłkę na Dysk`;
+  $('wyslij-kolejke').disabled = !navigator.onLine;
 }
 
-async function wyslijRekord(rekord) {
-  const folder = stan.inwestycja.folder;
-  if (!folder || !rekord.pdf) return false;
-  // Ten sam plik na Dysku nadpisujemy (poprawiony protokół bez duplikatu),
-  // chyba że w międzyczasie zmieniono folder docelowy.
-  const idPliku = rekord.drive?.folder === folder.id ? rekord.drive.id : undefined;
-  const wynik = await google.wyslijPdf({ pdf: rekord.pdf, nazwa: rekord.nazwaPliku, idFolderu: folder.id, idPliku });
-  rekord.drive = { id: wynik.id, link: wynik.webViewLink, folder: folder.id };
+const bezpiecznaNazwa = t => t.replace(/[\\/:*?"<>|]+/g, '-').trim();
+
+// Protokół trafia do: INWESTYCJE_3 / AUDYTY / <inwestycja> / <PC|PV|KOLEKTORY|kotły> /
+// Brakujące foldery zakładamy; ich id zapamiętujemy, żeby nie szukać za każdym razem.
+const takaSama = nazwa => n => normalizuj(n) === normalizuj(nazwa);
+
+async function folderTypu(idInwestycji, typ) {
+  const klucz = `folder|${idInwestycji}|${typ}`;
+  const zapamietany = await odczytaj('ustawienia', klucz);
+  if (zapamietany) return zapamietany;
+  const inw = await odczytaj('inwestycje', idInwestycji);
+  const idDysku = await google.idDysku(DYSK.inwestycje);
+  const idAudytow = await google.folderPodrzedny(idDysku, takaSama(DYSK.audyty), DYSK.audyty);
+  const idInw = await google.folderPodrzedny(idAudytow, takaSama(inw.nazwa), bezpiecznaNazwa(inw.nazwa));
+  const idTypu = await google.folderPodrzedny(idInw, takaSama(DYSK.foldery[typ]), DYSK.foldery[typ]);
+  await zapisz('ustawienia', klucz, idTypu);
+  return idTypu;
+}
+
+async function wyslijRekord(rekord, ponowienie = false) {
+  const idFolderu = rekord.drive?.folder || await folderTypu(rekord.inwestycja, rekord.typ);
+  let wynik;
+  try {
+    wynik = await google.wyslijPdf({ pdf: rekord.pdf, nazwa: rekord.nazwaPliku, idFolderu, idPliku: rekord.drive?.id });
+  } catch (blad) {
+    // Folder albo plik skasowany/przeniesiony na Dysku w międzyczasie -
+    // zapominamy zapamiętane miejsce i zakładamy je od nowa (raz).
+    if (ponowienie || !/404|not found/i.test(blad.message)) throw blad;
+    await usun('ustawienia', `folder|${rekord.inwestycja}|${rekord.typ}`);
+    rekord.drive = null;
+    return wyslijRekord(rekord, true);
+  }
+  rekord.drive = { id: wynik.id, link: wynik.webViewLink, folder: idFolderu };
   rekord.status = 'wyslany';
   rekord.wyslano = new Date().toISOString();
   await zapiszRekord(rekord);
-  return true;
 }
 
 $('wyslij-kolejke').addEventListener('click', async () => {
-  const przycisk = $('wyslij-kolejke');
-  przycisk.disabled = true;
+  $('wyslij-kolejke').disabled = true;
   let wyslane = 0;
   try {
-    for (const klucz of czekajaceNaWysylke()) {
+    for (const klucz of czekajace()) {
       const rekord = await odczytaj('audyty', klucz);
-      if (rekord && await wyslijRekord(rekord)) wyslane += 1;
+      if (rekord?.pdf) { await wyslijRekord(rekord); wyslane += 1; }
       $('kolejka-opis').textContent = `Wysłano ${wyslane}…`;
     }
   } catch (blad) {
@@ -363,112 +400,98 @@ $('wyslij-kolejke').addEventListener('click', async () => {
   renderujAdresy();
 });
 
-$('szukaj').addEventListener('input', e => { stan.szukaj = e.target.value; renderujAdresy(); });
-$('pokaz-rezygnacje').addEventListener('change', e => { stan.pokazRezygnacje = e.target.checked; renderujAdresy(); });
-
-// --- Ekran 3: szczegóły adresu ---
-
-function renderujAdres(a) {
-  pokazEkran('ekran-adres', a.adres);
-  const telefony = a.telefon ? a.telefon.split(/[,;]/).map(t => t.trim()).filter(Boolean) : [];
-  const wiersz = (etykieta, ...wartosc) => [el('dt', {}, etykieta), el('dd', {}, ...wartosc)];
-
-  $('szczegoly').replaceChildren(
-    el('h2', { class: 'szczegoly-adres' }, a.adres),
-    el('div', { class: 'znaczki' }, a.typy.map(znaczekTypu), a.rezygnacja && el('span', { class: 'znaczek rez' }, 'REZYGNACJA')),
-    el('dl', { class: 'dane' },
-      a.nazwisko && wiersz('Osoba', a.nazwisko),
-      telefony.length > 0 && wiersz('Telefon', telefony.flatMap((t, i) => {
-        const numer = t.replace(/[^\d+]/g, '');
-        const link = numer.length >= 9 ? el('a', { href: `tel:${numer}` }, t) : t;
-        return i ? [', ', link] : [link];
-      })),
-      a.obreb && wiersz('Obręb', a.obreb),
-      a.uid && wiersz('UID', a.uid)
-    ),
-    a.warianty.length > 1 && el('div', { class: 'ostrzezenie' },
-      el('strong', {}, 'Adres zapisany różnie w arkuszach:'),
-      el('ul', {}, a.warianty.map(w => el('li', {}, w)))
-    ),
-    el('div', { class: 'zrodla' }, 'W tabeli:',
-      el('ul', {}, a.rekordy.map(r => el('li', {},
-        `${TYP[r.typ].etykieta} – arkusz „${r.arkusz}”, wiersz ${r.wiersz}${r.lp ? `, LP ${r.lp}` : ''}${r.rezygnacja ? ' (rezygnacja)' : ''}`
-      )))
-    )
-  );
-
-  // Osobny protokół dla każdej instalacji pod adresem (PV i PC to różne szablony).
-  const szablony = stan.inwestycja.szablony || {};
-  $('protokoly').replaceChildren(...a.typy.map(typ => {
-    const status = stan.audyty.get(kluczAudytu(a, typ))?.status;
-    const opis = !szablony[typ] ? 'brak szablonu – wczytaj go na ekranie tabeli'
-      : status === 'wyslany' ? 'na Dysku Google ✔ – otwórz, żeby poprawić'
-        : status === 'zapisany' ? 'zapisany w tablecie, czeka na wysyłkę'
-          : status === 'szkic' ? 'rozpoczęty – kontynuuj'
-            : 'nowy';
-    return el('button', {
-      type: 'button',
-      class: `duzy${status === 'zapisany' || status === 'wyslany' ? ' drugorzedny' : ''}`,
-      disabled: !szablony[typ],
-      onclick: () => { location.hash = `audyt/${encodeURIComponent(a.id)}/${typ}`; }
-    }, `Protokół – ${TYP[typ].etykieta}`, el('small', {}, opis));
-  }));
-}
-
-// --- Ekran 4: protokół ---
+// --- Protokół ---
 
 const dzisiaj = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
-// "2026-10-27" jako data lokalna (new Date("2026-10-27") to północ UTC - w Polsce poprzedni dzień wieczorem).
+// "2026-10-27" jako data lokalna (new Date("2026-10-27") to północ UTC).
 const dataLokalna = tekst => {
   const [r, m, d] = String(tekst).split('-').map(Number);
   return new Date(r, m - 1, d);
 };
 
-function komunikat(tekst, ...dzieci) {
+function komunikat(tekst, { blad = false } = {}, ...dzieci) {
   const k = $('komunikat');
   k.replaceChildren(tekst, ...dzieci);
+  k.classList.toggle('blad', blad);
   k.hidden = !tekst;
 }
 
-function zamknijAudyt() {
-  if (!stan.audyt) return;
-  stan.audyt.edytor?.zniszcz();
-  stan.audyt.dokument?.destroy();
-  stan.audyt = null;
+function zamknijProtokol() {
+  if (!stan.protokol) return;
+  stan.protokol.edytor?.zniszcz();
+  stan.protokol.dokument?.destroy();
+  stan.protokol = null;
 }
 
-async function otworzAudyt(a, typ) {
-  if (stan.audyt?.rekord.klucz === kluczAudytu(a, typ)) return;
-  zamknijAudyt();
-  pokazEkran('ekran-audyt', `${TYP[typ].skrot} · ${a.adres}`);
-  komunikat('Otwieram szablon…');
-  const idSzablonu = stan.inwestycja.szablony?.[typ];
-  const szablon = idSzablonu && await odczytaj('szablony', idSzablonu);
-  if (!szablon) { komunikat('Brak szablonu dla tego typu instalacji. Wczytaj go na ekranie tabeli.'); return; }
+function pokazKontakt(a) {
+  const telefony = a.telefon ? a.telefon.split(/[,;]/).map(t => t.trim()).filter(Boolean) : [];
+  const RODZAJ = { grunt: 'pompa gruntowa', powietrze: 'pompa powietrzna' };
+  wstaw($('kontakt'), [
+    a.nazwisko && el('strong', {}, a.nazwisko),
+    ...telefony.map(t => {
+      const numer = t.replace(/[^\d+]/g, '');
+      return numer.length >= 9 ? el('a', { href: `tel:${numer}` }, `☎ ${t}`) : el('span', {}, t);
+    }),
+    a.rodzajPompy && el('span', {}, RODZAJ[a.rodzajPompy]),
+    a.warianty.length > 1 && el('span', {}, `w tabeli też jako: ${a.warianty.filter(w => w !== a.adres).join('; ')}`)
+  ]);
+}
 
-  const klucz = kluczAudytu(a, typ);
+async function ekranProtokol(idInwestycji, idAdresu, typ) {
+  await zaladujInwestycje(idInwestycji);
+  const a = stan.wynik.adresy.find(x => x.id === idAdresu);
+  if (!a || !TYP[typ]) { location.hash = `i/${encodeURIComponent(idInwestycji)}`; return; }
+  const klucz = kluczProtokolu(a, typ);
+  if (stan.protokol?.rekord.klucz === klucz) return;
+  zamknijProtokol();
+  pokazEkran('ekran-protokol', a.adres, `${TYP[typ].etykieta} · ${rozbijNazwe(stan.inwestycja.nazwa)[0]}`);
+  pokazKontakt(a);
+  $('strony').replaceChildren();
+  komunikat('Otwieram wzór protokołu…');
+
+  const wzor = wybierzWzor(stan.inwestycja.wzory, typ, a.rodzajPompy);
+  if (!wzor) {
+    komunikat(typ === 'pompy' && !a.rodzajPompy
+      ? 'Nie wiem, który wzór wybrać: w tabeli brak „rodzaju pompy”, a w folderze wzorów jest kilka wzorów PC.'
+      : `Brak wzoru protokołu dla: ${TYP[typ].etykieta}. Poproś biuro o wrzucenie go do folderu „Wzory audytów” tej inwestycji.`, { blad: true });
+    return;
+  }
+  let szablon = await odczytaj('szablony', wzor.id);
+  if (!szablon && navigator.onLine) {
+    szablon = { nazwa: wzor.nazwa, modifiedTime: wzor.modifiedTime, bajty: await google.pobierzPlik(wzor) };
+    await zapisz('szablony', wzor.id, szablon);
+  }
+  if (!szablon) { komunikat('Wzoru nie ma w pamięci tabletu, a nie ma internetu.', { blad: true }); return; }
+
   const rekord = await odczytaj('audyty', klucz) || {
     klucz,
-    inwestycja: stan.inwestycja.nazwa,
+    inwestycja: stan.inwestycja.id,
     adresId: a.id,
     adres: a.adres,
+    warianty: a.warianty,
     typ,
-    szablon: idSzablonu,
+    wzor: wzor.id,
     dane: { imie: a.nazwisko, adres: a.adres, telefon: a.telefon, email: a.email, data: dzisiaj() },
     kreski: null,
     status: null,
     utworzono: new Date().toISOString()
   };
+  // Wzór zmieniony w biurze po rozpoczęciu protokołu - pismo zostało
+  // narysowane na starym, więc zostajemy przy nim, jeśli jest w pamięci.
+  if (rekord.wzor !== wzor.id) {
+    const stary = await odczytaj('szablony', rekord.wzor);
+    if (stary) szablon = stary;
+  }
   const otwarty = { rekord, szablon };
-  stan.audyt = otwarty;
+  stan.protokol = otwarty;
 
   // pdf.js przejmuje bufor na własność - zawsze dajemy mu kopię.
   otwarty.dokument = await pdfjs.getDocument({ data: new Uint8Array(szablon.bajty.slice(0)) }).promise;
   otwarty.strony = await tekstSzablonu(otwarty.dokument);
-  if (stan.audyt !== otwarty) return; // audytor zdążył wyjść
+  if (stan.protokol !== otwarty) return; // audytor zdążył wyjść
   otwarty.edytor = await utworzEdytor($('strony'), {
     dokument: otwarty.dokument,
     wpisy: wpisyDla(otwarty),
@@ -476,7 +499,7 @@ async function otworzAudyt(a, typ) {
     onZmiana: kreski => zapiszSzkic(otwarty, kreski)
   });
   ustawPrzyciski();
-  komunikat(rekord.status === 'zapisany' || rekord.status === 'wyslany' ? 'Ten protokół był już zapisany. Zmiany wymagają ponownego „Zapisz”.' : '');
+  komunikat(rekord.status === 'wyslany' ? 'Ten protokół jest już na Dysku. Po poprawkach stuknij „Zapisz” – plik się podmieni.' : '');
 }
 
 const wpisyDla = otwarty => wyliczWpisy(otwarty.strony, { ...otwarty.rekord.dane, data: dataLokalna(otwarty.rekord.dane.data) });
@@ -496,46 +519,46 @@ function zapiszSzkic(otwarty, kreski) {
 async function zapiszRekord(rekord) {
   try {
     await zapisz('audyty', rekord.klucz, rekord);
-    stan.audyty.set(rekord.klucz, { status: rekord.status, zmieniono: rekord.zmieniono });
+    stan.audyty.set(rekord.klucz, { status: rekord.status, inwestycja: rekord.inwestycja });
   } catch (blad) {
     console.error(blad);
-    komunikat(`Nie udało się zapisać w pamięci tabletu: ${blad.message}`);
+    komunikat(`Nie udało się zapisać w pamięci tabletu: ${blad.message}`, { blad: true });
   }
 }
 
 function ustawPrzyciski() {
-  $('cofnij').disabled = !stan.audyt?.edytor?.mozeCofnac;
+  $('cofnij').disabled = !stan.protokol?.edytor?.mozeCofnac;
 }
 
 for (const przycisk of document.querySelectorAll('#narzedzia [data-narzedzie]')) {
   przycisk.addEventListener('click', () => {
     for (const p of document.querySelectorAll('#narzedzia [data-narzedzie]')) p.setAttribute('aria-pressed', String(p === przycisk));
-    stan.audyt?.edytor?.ustawNarzedzie(przycisk.dataset.narzedzie, przycisk.dataset.kolor);
+    stan.protokol?.edytor?.ustawNarzedzie(przycisk.dataset.narzedzie, przycisk.dataset.kolor);
   });
 }
 
 $('cofnij').addEventListener('click', () => {
-  stan.audyt?.edytor?.cofnij();
+  stan.protokol?.edytor?.cofnij();
   ustawPrzyciski();
 });
 
 $('tryb-palca').addEventListener('click', e => {
   const wlaczony = e.currentTarget.getAttribute('aria-pressed') !== 'true';
   e.currentTarget.setAttribute('aria-pressed', String(wlaczony));
-  e.currentTarget.textContent = wlaczony ? '✍ Palec pisze' : '✋ Palec przewija';
-  stan.audyt?.edytor?.ustawTrybPalca(wlaczony);
+  e.currentTarget.textContent = wlaczony ? 'Palcem: piszę' : 'Palcem: przewijam';
+  stan.protokol?.edytor?.ustawTrybPalca(wlaczony);
 });
 
 $('edytuj-dane').addEventListener('click', () => {
-  if (!stan.audyt) return;
+  if (!stan.protokol) return;
   const form = $('form-dane');
-  for (const [pole, wartosc] of Object.entries(stan.audyt.rekord.dane)) if (form.elements[pole]) form.elements[pole].value = wartosc || '';
+  for (const [pole, wartosc] of Object.entries(stan.protokol.rekord.dane)) if (form.elements[pole]) form.elements[pole].value = wartosc || '';
   $('dialog-dane').showModal();
 });
 
 $('dialog-dane').addEventListener('close', () => {
-  const otwarty = stan.audyt;
-  if ($('dialog-dane').returnValue !== 'ok' || !otwarty) return;
+  const otwarty = stan.protokol;
+  if ($('dialog-dane').returnValue !== 'ok' || !otwarty?.edytor) return;
   const form = $('form-dane');
   for (const pole of ['imie', 'adres', 'telefon', 'email', 'data']) otwarty.rekord.dane[pole] = form.elements[pole].value.trim();
   if (!otwarty.rekord.dane.data) otwarty.rekord.dane.data = dzisiaj();
@@ -543,53 +566,50 @@ $('dialog-dane').addEventListener('close', () => {
   zapiszSzkic(otwarty, otwarty.edytor.kreski);
 });
 
-const nazwaPliku = rekord => `Protokół ${TYP[rekord.typ].skrot} - ${rekord.dane.adres || rekord.adres}.pdf`.replace(/[\\/:*?"<>|]+/g, '-');
+// "Bartodzieje 21_PC.pdf" - tak jak dotychczasowe audyty w folderach projektów.
+const nazwaPliku = rekord => bezpiecznaNazwa(`${rekord.adres}_${SKROT_PLIKU[rekord.typ]}`) + '.pdf';
 
 $('zapisz-protokol').addEventListener('click', async () => {
-  const otwarty = stan.audyt;
+  const otwarty = stan.protokol;
   if (!otwarty?.edytor) return;
   const przycisk = $('zapisz-protokol');
   przycisk.disabled = true;
-  komunikat('Tworzę PDF…');
+  komunikat('Zapisuję…');
+  const nastepny = () => el('button', { type: 'button', class: 'duzy glowny', onclick: () => history.back() }, 'Następny adres');
   try {
     const czcionka = await (await fetch('vendor/DejaVuSansCondensed.ttf')).arrayBuffer();
+    const rekord = otwarty.rekord;
+    rekord.nazwaPliku = nazwaPliku(rekord);
     const bajty = await zbudujPdf({
       szablon: otwarty.szablon.bajty.slice(0),
       czcionka,
       fontkit: window.fontkit,
       teksty: wpisyDla(otwarty),
       kreski: otwarty.edytor.kreski,
-      tytul: nazwaPliku(otwarty.rekord).replace(/\.pdf$/, '')
+      tytul: rekord.nazwaPliku.replace(/\.pdf$/, '')
     });
-    const rekord = otwarty.rekord;
     rekord.kreski = otwarty.edytor.kreski;
     rekord.pdf = new Blob([bajty], { type: 'application/pdf' });
-    rekord.nazwaPliku = nazwaPliku(rekord);
     rekord.status = 'zapisany';
     rekord.zapisano = new Date().toISOString();
-    rekord.zmieniono = rekord.zapisano;
     clearTimeout(czasAutozapisu);
     await zapiszRekord(rekord);
-    const pobierz = el('a', { href: URL.createObjectURL(rekord.pdf), download: rekord.nazwaPliku }, 'pobierz PDF');
-    // Od razu na Dysk, jeśli się da. Bez zasięgu protokół czeka w tablecie -
-    // na liście adresów pojawi się przycisk "Wyślij na Dysk".
-    if (!stan.inwestycja.folder || !google.skonfigurowany()) {
-      komunikat(`Zapisano w tablecie: ${rekord.nazwaPliku} (`, pobierz, '). Wybierz folder na Dysku na ekranie tabeli, żeby wysyłać protokoły.');
-    } else if (!navigator.onLine) {
-      komunikat(`Zapisano w tablecie: ${rekord.nazwaPliku}. Brak internetu – wyślesz go z listy adresów, gdy będzie zasięg.`);
-    } else {
-      komunikat('Wysyłam na Dysk Google…');
-      try {
-        await wyslijRekord(rekord);
-        komunikat(`Wysłano na Dysk: ${rekord.nazwaPliku} → folder „${stan.inwestycja.folder.nazwa}”. `, el('a', { href: rekord.drive.link, target: '_blank', rel: 'noopener' }, 'otwórz'));
-      } catch (blad) {
-        console.error(blad);
-        komunikat(`Zapisano w tablecie, ale wysyłka się nie udała (${blad.message}). Spróbujesz ponownie z listy adresów.`);
-      }
+
+    if (!navigator.onLine) {
+      komunikat('Zapisano w tablecie. Brak internetu – wyślesz z listy adresów, gdy będzie zasięg.', {}, nastepny());
+      return;
+    }
+    komunikat('Wysyłam na Dysk…');
+    try {
+      await wyslijRekord(rekord);
+      komunikat(`✔ Zapisano na Dysku: ${DYSK.audyty} / ${rozbijNazwe(stan.inwestycja.nazwa)[0]} / ${DYSK.foldery[rekord.typ]} / ${rekord.nazwaPliku}`, {}, nastepny());
+    } catch (blad) {
+      console.error(blad);
+      komunikat(`Zapisano w tablecie, ale wysyłka się nie udała (${blad.message}). Wyślesz z listy adresów.`, { blad: true }, nastepny());
     }
   } catch (blad) {
     console.error(blad);
-    komunikat(`Nie udało się zapisać protokołu: ${blad.message}`);
+    komunikat(`Nie udało się zapisać protokołu: ${blad.message}`, { blad: true });
   } finally {
     przycisk.disabled = false;
   }
@@ -598,8 +618,8 @@ $('zapisz-protokol').addEventListener('click', async () => {
 // --- Start ---
 
 function pokazSiec() {
-  $('siec').textContent = navigator.onLine ? '' : 'offline';
-  if (stan.inwestycja) pokazKolejke();
+  $('siec').hidden = navigator.onLine;
+  if (stan.inwestycja && !$('ekran-adresy').hidden) pokazKolejke();
 }
 window.addEventListener('online', pokazSiec);
 window.addEventListener('offline', pokazSiec);
@@ -607,14 +627,11 @@ window.addEventListener('offline', pokazSiec);
 async function start() {
   pokazSiec();
   try {
-    const zapisana = await odczytaj('inwestycje', 'biezaca');
-    if (zapisana) {
-      stan.inwestycja = zapisana;
-      stan.wynik = zbudujListeAdresow(zapisana.arkusze, zapisana.przypisania);
-    }
-    for (const r of await wszystkie('audyty')) stan.audyty.set(r.klucz, { status: r.status, zmieniono: r.zmieniono });
+    stan.inwestycje = await odczytaj('ustawienia', 'inwestycje') || [];
+    stan.ostatnie = await odczytaj('ustawienia', 'ostatnie') || [];
+    for (const r of await wszystkie('audyty')) if (r.inwestycja) stan.audyty.set(r.klucz, { status: r.status, inwestycja: r.inwestycja });
   } catch (blad) {
-    console.warn('Nie odczytano zapisanej tabeli', blad);
+    console.warn('Nie odczytano danych z pamięci tabletu', blad);
   }
   trasa();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(blad => console.warn('Service worker', blad));

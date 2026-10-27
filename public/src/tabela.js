@@ -63,15 +63,33 @@ export function rozpoznajTypArkusza(nazwa) {
 // "Odbiór Gmina (wypełnia biuro)" - to NIE jest kolumna z nazwą gminy, więc
 // gminy celowo tu nie ma.
 const KOLUMNY = {
-  adres: n => n === 'adres' || n === 'adres nieruchomosci',
+  adres: n => n === 'adres',
   lp: n => n === 'lp' || n === 'l p',
   uid: n => n === 'uid',
   nazwisko: n => n.startsWith('imie i nazwisko') || n === 'nazwisko' || n === 'imie nazwisko',
   telefon: n => n.includes('telefon') || n === 'nr tel' || n === 'tel',
   email: n => n === 'e mail' || n === 'email' || n === 'mail' || n === 'adres e mail',
   obreb: n => n.startsWith('obreb'),
-  rezygnacja: n => n.startsWith('rezyg')
+  rezygnacja: n => n.startsWith('rezyg'),
+  rodzajPompy: n => n.startsWith('rodzaj pompy')
 };
+
+// Arkusz z eksportu innego systemu audytów (np. zakładka "Pompy Ciepła" w
+// tabeli Masłowic) zaczyna się od angielskich kluczy "uid", "address", ...
+// To nie jest lista montażowa. Uwaga: prawdziwe tabele montażowe też mają
+// kolumny "audit_0_..." doklejone daleko po prawej - dlatego patrzymy tylko
+// na pierwsze kolumny.
+export function czyEksport(wiersze) {
+  return (wiersze || []).slice(0, 3).some(w => (w || []).slice(0, 5).some(k => String(k ?? '').trim() === 'address'));
+}
+
+// "Gruntowa" -> grunt, "Powietrze-woda" / "powietrzna" -> powietrze.
+function rodzajPompy(wartosc) {
+  const n = normalizuj(wartosc);
+  if (/grunt/.test(n)) return 'grunt';
+  if (/powietrz/.test(n)) return 'powietrze';
+  return null;
+}
 
 function indeksKolumn(wierszNaglowka) {
   const indeks = {};
@@ -164,7 +182,8 @@ export function odczytajArkusz(arkusz, typ) {
       telefon,
       email,
       obreb: wez(wiersz, 'obreb'),
-      rezygnacja: czyRezygnacja(wez(wiersz, 'rezygnacja'))
+      rezygnacja: czyRezygnacja(wez(wiersz, 'rezygnacja')),
+      rodzajPompy: typ === 'pompy' ? rodzajPompy(wez(wiersz, 'rodzajPompy')) : null
     });
   }
   return { nazwa: arkusz.nazwa, typ, blad: null, rekordy };
@@ -189,9 +208,10 @@ export function kluczAdresu(adres) {
 // rozpoznania przez audytora; brak wpisu = rozpoznanie automatyczne.
 export function zbudujListeAdresow(arkusze, przypisania = {}) {
   const arkuszeInfo = arkusze.map(arkusz => {
-    const auto = rozpoznajTypArkusza(arkusz.nazwa);
+    const eksport = czyEksport(arkusz.wiersze);
+    const auto = eksport ? null : rozpoznajTypArkusza(arkusz.nazwa);
     const typ = Object.prototype.hasOwnProperty.call(przypisania, arkusz.nazwa) ? przypisania[arkusz.nazwa] : auto;
-    return { nazwa: arkusz.nazwa, auto, typ, liczbaWierszy: (arkusz.wiersze || []).length };
+    return { nazwa: arkusz.nazwa, auto, typ, eksport, liczbaWierszy: (arkusz.wiersze || []).length };
   });
 
   const odczytane = [];
@@ -264,6 +284,7 @@ export function zbudujListeAdresow(arkusze, przypisania = {}) {
       nazwisko: nazwiska.join('; '),
       telefon: zPola('telefon'),
       email: zPola('email'),
+      rodzajPompy: zPola('rodzajPompy') || null,
       uid: zPola('uid'),
       obreb: zPola('obreb'),
       typy,

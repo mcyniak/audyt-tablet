@@ -45,6 +45,25 @@ wzór w `test/lokalne.przyklad.json`) i pomijają się, gdy go nie ma.
 - Znacznik „ŻŻŻ ” przed adresem (spotykany w arkuszach pomp) jest usuwany.
 - Rezygnacja liczy się tylko, gdy zrezygnowano ze wszystkich instalacji pod adresem.
 
+## Konwencja na Dysku (dysk współdzielony INWESTYCJE_3)
+
+```
+INWESTYCJE_3/
+├── <INWESTYCJA>/                     ← inwestycja = folder z tabelą montażową
+│   ├── <…> tab. montażowa <…>         (arkusz Google albo .xlsx, nazwa zawiera „montaż”)
+│   └── Wzory audytów/                 (PDF lub dokument Google na typ audytu;
+│       ├── PC powietrzne.pdf           typ rozpoznawany z nazwy: PC/pompa, grunt/powietrz,
+│       ├── PC gruntowe.pdf             PV/fotowolt, KOLEKTORY/solar, KOTŁY)
+│       └── PV.pdf
+└── AUDYTY/                           ← gotowe protokoły (foldery zakładane same)
+    └── <INWESTYCJA>/
+        ├── PC/<adres>_PC.pdf
+        └── PV/<adres>_PV.pdf
+```
+
+Nazwy i wzorce są w `public/config.js`. Dla pomp wzór gruntowy/powietrzny wybiera
+kolumna „rodzaj pompy” z tabeli.
+
 ## Etapy
 
 1. ✅ Szkielet, wczytanie tabeli, rozpoznanie arkuszy, lista adresów.
