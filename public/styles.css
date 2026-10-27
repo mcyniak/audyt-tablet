@@ -1,0 +1,399 @@
+/* Tablet w terenie: duże cele dotyku, wysoki kontrast (praca w słońcu). */
+:root {
+  --tlo: #f3f5f4;
+  --karta: #ffffff;
+  --tekst: #14201d;
+  --przygaszony: #5b6b66;
+  --linia: #d6dedb;
+  --akcent: #0f5c4c;
+  --akcent-tekst: #ffffff;
+  --akcent-jasny: #e3f1ed;
+  --blad: #b3261e;
+  --ostrzezenie: #8a5a00;
+  --ostrzezenie-tlo: #fff4dc;
+  --kot: #8d4b1f;
+  --sol: #b07800;
+  --pv: #1d5fa8;
+  --pc: #0f7a4f;
+  --cel: 56px;
+  --promien: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --tlo: #0f1513;
+    --karta: #19211e;
+    --tekst: #e8eeec;
+    --przygaszony: #9fb0aa;
+    --linia: #2c3834;
+    --akcent: #4fc3a1;
+    --akcent-tekst: #08251e;
+    --akcent-jasny: #183a31;
+    --blad: #ff8a80;
+    --ostrzezenie: #ffcf70;
+    --ostrzezenie-tlo: #3a2e14;
+    --kot: #e0a074;
+    --sol: #f0c040;
+    --pv: #7fb2ef;
+    --pc: #5fd3a0;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; }
+
+body {
+  background: var(--tlo);
+  color: var(--tekst);
+  font: 18px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pasek {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 8px 16px;
+  padding-top: max(8px, env(safe-area-inset-top));
+  background: var(--akcent);
+  color: var(--akcent-tekst);
+}
+
+.pasek h1 {
+  flex: 1;
+  margin: 0;
+  font-size: 22px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wstecz {
+  width: var(--cel);
+  height: 48px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font-size: 40px;
+  line-height: 1;
+}
+
+.siec { font-size: 14px; opacity: .9; }
+
+main { max-width: 900px; margin: 0 auto; padding: 16px; }
+
+.karta {
+  background: var(--karta);
+  border: 1px solid var(--linia);
+  border-radius: var(--promien);
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.karta h2 { margin: 0 0 8px; font-size: 22px; }
+
+.opis { margin: 0 0 16px; color: var(--przygaszony); }
+
+.przyciski { display: flex; flex-wrap: wrap; gap: 12px; }
+
+.duzy {
+  display: inline-flex;
+  flex: 1 1 260px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--cel);
+  padding: 12px 20px;
+  border: 2px solid var(--akcent);
+  border-radius: 12px;
+  background: var(--akcent);
+  color: var(--akcent-tekst);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.duzy small { font-weight: 400; font-size: 14px; opacity: .85; }
+.duzy.drugorzedny { background: transparent; color: var(--akcent); }
+.duzy:disabled { opacity: .45; cursor: default; }
+#pokaz-adresy, #rozpocznij { width: 100%; margin-top: 8px; }
+
+.blad { color: var(--blad); font-weight: 600; }
+
+.arkusze { list-style: none; margin: 0 0 12px; padding: 0; }
+
+.arkusze li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 12px 0;
+  border-top: 1px solid var(--linia);
+}
+
+.arkusze .pominiete { display: block; }
+.arkusze .pominiete details { width: 100%; }
+.arkusze .pominiete summary { min-height: 48px; display: flex; align-items: center; color: var(--przygaszony); cursor: pointer; }
+.arkusze .pominiete summary::before { content: "▸"; width: 24px; }
+.arkusze .pominiete details[open] summary::before { content: "▾"; }
+.arkusze .pominiete .arkusze { margin: 0; }
+.arkusze .nazwa { flex: 1 1 220px; font-weight: 600; word-break: break-word; }
+.arkusze .info { flex: 1 1 100%; color: var(--przygaszony); font-size: 15px; }
+.arkusze .info.blad { color: var(--blad); }
+
+select {
+  min-height: 48px;
+  min-width: 180px;
+  padding: 0 12px;
+  border: 1px solid var(--linia);
+  border-radius: 10px;
+  background: var(--karta);
+  color: var(--tekst);
+  font: inherit;
+}
+
+.liczniki { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+
+.licznik {
+  min-height: 48px;
+  padding: 8px 16px;
+  border: 2px solid var(--linia);
+  border-radius: 999px;
+  background: var(--karta);
+  color: var(--tekst);
+  font: inherit;
+  font-size: 16px;
+}
+
+.licznik b { font-size: 18px; }
+.licznik[aria-pressed="true"] { border-color: var(--akcent); background: var(--akcent-jasny); }
+.licznik.razem { font-weight: 600; }
+
+.szukaj {
+  position: sticky;
+  top: 64px;
+  z-index: 5;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 0 12px;
+  background: var(--tlo);
+}
+
+.szukaj input[type="search"] {
+  flex: 1;
+  min-width: 0;
+  height: var(--cel);
+  padding: 0 16px;
+  border: 2px solid var(--linia);
+  border-radius: 12px;
+  background: var(--karta);
+  color: var(--tekst);
+  font: inherit;
+}
+
+.szukaj input[type="search"]:focus { outline: none; border-color: var(--akcent); }
+
+.przelacznik { display: flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 16px; color: var(--przygaszony); }
+.przelacznik input { width: 24px; height: 24px; }
+
+.adresy { list-style: none; margin: 0; padding: 0; }
+
+.adresy li > button {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  width: 100%;
+  min-height: 72px;
+  margin-bottom: 8px;
+  padding: 12px 16px;
+  border: 1px solid var(--linia);
+  border-radius: 12px;
+  background: var(--karta);
+  color: var(--tekst);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.adresy li > button:active { background: var(--akcent-jasny); }
+.adresy .adres { font-weight: 700; font-size: 19px; }
+.adresy .osoba { grid-column: 1; color: var(--przygaszony); font-size: 15px; }
+.adresy .znaczki { grid-column: 2; grid-row: 1 / span 2; display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; align-content: center; max-width: 160px; }
+.adresy .zrezygnowal { opacity: .55; }
+
+.znaczek {
+  display: inline-block;
+  min-width: 40px;
+  padding: 2px 8px;
+  border: 2px solid currentColor;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.znaczek.kotly { color: var(--kot); }
+.znaczek.solary { color: var(--sol); }
+.znaczek.pv_me { color: var(--pv); }
+.znaczek.pompy { color: var(--pc); }
+.znaczek.rez { color: var(--blad); }
+.znaczek.uwaga { color: var(--ostrzezenie); }
+
+.pusto { text-align: center; color: var(--przygaszony); padding: 32px 0; }
+
+.szczegoly-adres { margin: 0 0 4px; font-size: 26px; }
+.dane { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 16px 0 0; }
+.dane dt { color: var(--przygaszony); }
+.dane dd { margin: 0; word-break: break-word; }
+.dane a { color: var(--akcent); font-weight: 600; }
+
+.ostrzezenie {
+  margin-top: 16px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: var(--ostrzezenie-tlo);
+  color: var(--ostrzezenie);
+}
+
+.ostrzezenie ul { margin: 6px 0 0; padding-left: 20px; }
+
+.zrodla { margin-top: 16px; font-size: 15px; color: var(--przygaszony); }
+.zrodla ul { margin: 4px 0 0; padding-left: 20px; }
+
+.znaczek.gotowe { color: var(--pc); }
+.znaczek.szkic { color: var(--pv); }
+
+.karta h3 { margin: 20px 0 4px; font-size: 19px; }
+
+.szablony { list-style: none; margin: 0 0 12px; padding: 0; }
+
+.szablony li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--linia);
+}
+
+.szablony .nazwa { font-weight: 600; }
+.szablony .plik { flex: 1 1 200px; color: var(--przygaszony); font-size: 15px; word-break: break-word; }
+.szablony .plik.brak { color: var(--ostrzezenie); }
+
+.maly {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 2px solid var(--akcent);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--akcent);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.protokoly { display: flex; flex-direction: column; gap: 12px; }
+
+/* --- Protokół: pasek narzędzi i strony --- */
+
+body.tryb-audyt main { max-width: 1100px; padding: 0 8px 32px; }
+
+.narzedzia {
+  position: sticky;
+  top: 64px;
+  z-index: 8;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 0;
+  background: var(--tlo);
+}
+
+.narzedzia button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 48px;
+  padding: 0 14px;
+  border: 2px solid var(--linia);
+  border-radius: 10px;
+  background: var(--karta);
+  color: var(--tekst);
+  font: inherit;
+  font-size: 16px;
+}
+
+.narzedzia button[aria-pressed="true"] { border-color: var(--akcent); background: var(--akcent-jasny); font-weight: 600; }
+.narzedzia button:disabled { opacity: .4; }
+.narzedzia button.glowny { border-color: var(--akcent); background: var(--akcent); color: var(--akcent-tekst); font-weight: 700; padding: 0 22px; }
+.narzedzia .odstep { flex: 1; }
+.narzedzia .kropka { width: 14px; height: 14px; border-radius: 50%; }
+
+/* Tablet w pionie: kolory jako same kropki, żeby pasek mieścił się w jednym wierszu. */
+@media (max-width: 900px) {
+  .narzedzia .etykieta { display: none; }
+  .narzedzia .kropka { width: 20px; height: 20px; }
+  .narzedzia button { padding: 0 12px; }
+}
+
+.komunikat {
+  margin: 0 0 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--akcent-jasny);
+}
+
+.komunikat a { color: var(--akcent); font-weight: 700; }
+
+.strony { display: flex; flex-direction: column; gap: 12px; }
+
+.strona {
+  position: relative;
+  width: 100%;
+  /* Strona protokołu zawsze biała, także w trybie ciemnym - to papier. */
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .25);
+}
+
+.strona canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+/* Palec przewija i powiększa, rysik pisze. W trybie "palec pisze" warstwa
+   przejmuje wszystkie gesty. */
+.strona .zywa { touch-action: pan-x pan-y pinch-zoom; cursor: crosshair; }
+.pisz-palcem .strona .zywa { touch-action: none; }
+
+dialog {
+  width: min(560px, calc(100vw - 32px));
+  padding: 20px;
+  border: 0;
+  border-radius: var(--promien);
+  background: var(--karta);
+  color: var(--tekst);
+}
+
+dialog::backdrop { background: rgba(0, 0, 0, .45); }
+dialog h2 { margin: 0 0 4px; }
+dialog label { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; color: var(--przygaszony); font-size: 15px; }
+
+dialog input {
+  height: 52px;
+  padding: 0 12px;
+  border: 2px solid var(--linia);
+  border-radius: 10px;
+  background: var(--tlo);
+  color: var(--tekst);
+  font: inherit;
+}
+
+@media (max-width: 480px) {
+  body { font-size: 17px; }
+  .szukaj { flex-wrap: wrap; }
+  .adresy .znaczki { max-width: 96px; }
+}

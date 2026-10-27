@@ -1,0 +1,23 @@
+{
+  "name": "audyt-tablet",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Aplikacja dla audytorów (tablety z Androidem): wybór adresu z tabeli montażowej, pisanie po szablonie audytu PDF, zapis na Google Drive.",
+  "type": "module",
+  "scripts": {
+    "start": "node scripts/serve.js",
+    "vendor": "node scripts/vendor.js",
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "@pdf-lib/fontkit": "^1.1.1",
+    "dejavu-fonts-ttf": "^2.37.3",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^4.8.69",
+    "perfect-freehand": "^1.2.2",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

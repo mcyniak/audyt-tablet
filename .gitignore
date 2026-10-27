@@ -1,0 +1,4 @@
+node_modules/
+*.log
+# Prawdziwe ścieżki do tabel i szablonów firmy - repozytorium jest publiczne.
+test/lokalne.json

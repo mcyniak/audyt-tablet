@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f5c4c">
+  <title>Audyt</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="pasek">
+    <button class="wstecz" id="wstecz" type="button" aria-label="Wstecz" hidden>‹</button>
+    <h1 id="tytul">Audyt</h1>
+    <span class="siec" id="siec" aria-live="polite"></span>
+  </header>
+
+  <main>
+    <!-- Ekran 1: wybór tabeli montażowej -->
+    <section class="ekran" id="ekran-tabela">
+      <div class="karta">
+        <h2>Tabela montażowa</h2>
+        <p class="opis">Wybierz tabelę inwestycji. Aplikacja zbierze adresy z arkuszy kotłów, solarów, PV_ME i pomp ciepła.</p>
+        <div class="przyciski">
+          <button type="button" class="duzy" id="z-drive" disabled>Z Google Drive <small>(wkrótce)</small></button>
+          <label class="duzy drugorzedny">
+            Z pliku .xlsx
+            <input type="file" id="z-pliku" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+          </label>
+        </div>
+        <p class="blad" id="blad-tabeli" hidden></p>
+      </div>
+
+      <div class="karta" id="karta-arkusze" hidden>
+        <h2 id="nazwa-inwestycji"></h2>
+        <p class="opis">Sprawdź, czy arkusze są dobrze rozpoznane. Możesz poprawić typ albo pominąć arkusz.</p>
+        <ul class="arkusze" id="lista-arkuszy"></ul>
+        <h3>Szablony protokołów</h3>
+        <p class="opis">Pusty protokół PDF dla każdego typu instalacji. Dane z tabeli wpiszą się w niego same.</p>
+        <ul class="szablony" id="lista-szablonow"></ul>
+        <input type="file" id="plik-szablonu" accept="application/pdf,.pdf" hidden>
+        <button type="button" class="duzy" id="pokaz-adresy"></button>
+      </div>
+    </section>
+
+    <!-- Ekran 2: lista adresów -->
+    <section class="ekran" id="ekran-adresy" hidden>
+      <div class="liczniki" id="liczniki"></div>
+      <div class="szukaj">
+        <input type="search" id="szukaj" placeholder="Szukaj adresu, nazwiska, telefonu…" autocomplete="off">
+        <label class="przelacznik"><input type="checkbox" id="pokaz-rezygnacje"> rezygnacje</label>
+      </div>
+      <ul class="adresy" id="lista-adresow"></ul>
+      <p class="pusto" id="brak-wynikow" hidden>Brak adresów pasujących do wyszukiwania.</p>
+    </section>
+
+    <!-- Ekran 3: szczegóły adresu -->
+    <section class="ekran" id="ekran-adres" hidden>
+      <div class="karta" id="szczegoly"></div>
+      <div class="protokoly" id="protokoly"></div>
+    </section>
+
+    <!-- Ekran 4: protokół - pisanie po szablonie -->
+    <section class="ekran" id="ekran-audyt" hidden>
+      <div class="narzedzia" id="narzedzia" role="toolbar" aria-label="Narzędzia">
+        <button type="button" data-narzedzie="pioro" data-kolor="#1a3d8f" aria-pressed="true" aria-label="Pióro niebieskie"><span class="kropka" style="background:#1a3d8f"></span><span class="etykieta">Pióro</span></button>
+        <button type="button" data-narzedzie="pioro" data-kolor="#111111" aria-pressed="false" aria-label="Pióro czarne"><span class="kropka" style="background:#111111"></span><span class="etykieta">Czarny</span></button>
+        <button type="button" data-narzedzie="pioro" data-kolor="#c62828" aria-pressed="false" aria-label="Pióro czerwone"><span class="kropka" style="background:#c62828"></span><span class="etykieta">Czerwony</span></button>
+        <button type="button" data-narzedzie="gumka" aria-pressed="false">⌫<span class="etykieta"> Gumka</span></button>
+        <button type="button" id="cofnij" disabled aria-label="Cofnij">↶<span class="etykieta"> Cofnij</span></button>
+        <button type="button" id="tryb-palca" aria-pressed="false" title="Dla tabletów bez rysika">✋ Palec przewija</button>
+        <span class="odstep"></span>
+        <button type="button" id="edytuj-dane">Dane</button>
+        <button type="button" id="zapisz-protokol" class="glowny">Zapisz</button>
+      </div>
+      <p class="komunikat" id="komunikat" role="status" hidden></p>
+      <div class="strony" id="strony"></div>
+    </section>
+  </main>
+
+  <dialog id="dialog-dane">
+    <form method="dialog" id="form-dane">
+      <h2>Dane w protokole</h2>
+      <p class="opis">Wpisane automatycznie z tabeli. Popraw, jeśli w terenie okaże się inaczej.</p>
+      <label>Imię i nazwisko <input name="imie" autocomplete="off"></label>
+      <label>Adres miejsca instalacji <input name="adres" autocomplete="off"></label>
+      <label>Telefon <input name="telefon" inputmode="tel" autocomplete="off"></label>
+      <label>E-mail <input name="email" type="email" autocomplete="off"></label>
+      <label>Data <input name="data" type="date"></label>
+      <div class="przyciski">
+        <button type="submit" value="anuluj" class="duzy drugorzedny">Anuluj</button>
+        <button type="submit" value="ok" class="duzy">Zapisz dane</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="vendor/xlsx.full.min.js"></script>
+  <script src="vendor/fontkit.umd.min.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
