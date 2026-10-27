@@ -4,7 +4,7 @@
 // https://mcyniak.github.io (ustawione w Cloud Console).
 // Puste = przycisk "Z Google Drive" pokazuje, że Google nie jest skonfigurowany.
 export const GOOGLE = {
-  clientId: '', // OAuth 2.0 Client ID (typ: aplikacja internetowa), …apps.googleusercontent.com
-  apiKey: '', // klucz API ograniczony do Google Picker API i strony mcyniak.github.io
-  appId: '' // numer projektu (Project number) z Cloud Console
+  clientId: '460087887322-dcbpakdmkhor2ahf8tlap11ban8ic6gj.apps.googleusercontent.com', // OAuth 2.0 Client ID (aplikacja internetowa)
+  apiKey: 'AIzaSyAIzY_QO3UicnO6H7k7o1yZfdTC1uPkQN4', // klucz API ograniczony do Google Picker API i strony mcyniak.github.io
+  appId: '460087887322' // numer projektu (Project number) z Cloud Console
 };
