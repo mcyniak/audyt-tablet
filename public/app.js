@@ -5,6 +5,7 @@ import { wyliczWpisy, tekstSzablonu } from './src/wypelnianie.js';
 import { utworzEdytor } from './src/edytor.js';
 import { zbudujPdf } from './src/eksport.js';
 import { wybierzWzor } from './src/wzory.js';
+import { ikona, wstawIkony } from './src/ikony.js';
 import * as google from './src/google.js';
 import { DYSK } from './config.js';
 
@@ -25,6 +26,7 @@ const stan = {
   szukajAdresu: '',
   filtrTypu: null,
   pokazRezygnacje: false,
+  ostrzezenieOdswiezania: '',
   protokol: null // otwarty protokół: { rekord, edytor, dokument, strony, szablon }
 };
 
@@ -36,6 +38,7 @@ function el(tag, wlasciwosci = {}, ...dzieci) {
   for (const [k, v] of Object.entries(wlasciwosci)) {
     if (v === undefined || v === null || v === false) continue;
     if (k === 'class') e.className = v;
+    else if (k === 'style') e.style.cssText = v;
     else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
     else if (k in e && typeof v !== 'string') e[k] = v;
     else e.setAttribute(k, v === true ? '' : v);
@@ -51,47 +54,72 @@ function wstaw(kontener, dzieci, zastap = true) {
   else kontener.append(...elementy);
 }
 
-// Stałe ikony (bez danych użytkownika).
-const SVG = {
-  strzalka: '<path d="M9 5l7 7-7 7"/>',
-  ok: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
-  wysylka: '<path d="M12 19V6M6 11l6-6 6 6"/>',
-  szkic: '<path d="M4 20h4L19 9l-4-4L4 16z"/>'
-};
-function ikona(nazwa, klasa = '') {
-  const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  s.setAttribute('viewBox', '0 0 24 24');
-  s.setAttribute('aria-hidden', 'true');
-  if (klasa) s.setAttribute('class', klasa);
-  s.innerHTML = SVG[nazwa];
-  return s;
-}
-
 const OPIS_STATUSU = { wyslany: 'Na Dysku', zapisany: 'Czeka na wysyłkę', szkic: 'Rozpoczęty' };
-function znaczekStatusu(status) {
-  if (!status) return null;
-  return el('span', { class: `status ${status}`, title: OPIS_STATUSU[status] }, ikona({ wyslany: 'ok', zapisany: 'wysylka', szkic: 'szkic' }[status]));
-}
+const kolkoStatusu = status => el('span', { class: `kolko ${status || ''}`, title: OPIS_STATUSU[status] || 'Nie rozpoczęty' },
+  status && ikona({ wyslany: 'ok', zapisany: 'wysylka', szkic: 'pioro' }[status]));
+
+const pasekPostepu = (ile, razem) => el('span', { class: 'pasek-postepu' }, el('i', { style: `width:${razem ? Math.round(ile / razem * 100) : 0}%` }));
 
 // "GALEWICE 2026 - PC_SOL_ME_PV_KOTŁY" -> ["GALEWICE 2026", "PC_SOL_ME_PV_KOTŁY"]
+// "MASŁOWICE 2025_PC PV ME"           -> ["MASŁOWICE 2025", "PC PV ME"]
 function rozbijNazwe(nazwa) {
   const [glowna, ...reszta] = nazwa.split(/\s+-\s+/);
-  return [glowna.trim(), reszta.join(' - ')];
+  if (reszta.length) return [glowna.trim(), reszta.join(' - ')];
+  const poRoku = /^(.+?\b(?:19|20)\d{2})[\s_-]+(.+)$/.exec(nazwa);
+  return poRoku ? [poRoku[1], poRoku[2]] : [nazwa.trim(), ''];
+}
+
+// Typy instalacji z nazwy folderu inwestycji ("- pv, me, pc", "_PC PV ME").
+function typyZNazwy(nazwa) {
+  const n = ` ${normalizuj(nazwa)} `;
+  return [
+    [/\s(pc|pompy|pompa)\s/, 'PC'], [/\spv\s/, 'PV'], [/\sme\s/, 'ME'],
+    [/\s(sol|solary|kolektory)\s/, 'SOL'], [/\skotl/, 'KOTŁY']
+  ].filter(([w]) => w.test(n)).map(([, s]) => s);
+}
+
+// --- Powiadomienia ---
+
+function toast(tekst, { typ = 'info', akcja = null, czas = 4000 } = {}) {
+  const t = el('div', { class: `toast ${typ}` },
+    ikona(typ === 'ok' ? 'ok' : typ === 'blad' ? 'uwaga' : 'wysylka'),
+    el('span', {}, tekst),
+    akcja && el('button', { type: 'button', class: 'btn btn-glowny', onclick: () => { t.remove(); akcja.onclick(); } }, akcja.etykieta)
+  );
+  $('toasty').append(t);
+  if (czas) setTimeout(() => t.remove(), czas);
+  return t;
+}
+
+function pokazUwage(id, tekst, { neutralna = false } = {}) {
+  const e = $(id);
+  wstaw(e, [tekst && ikona(neutralna ? 'wysylka' : 'uwaga'), tekst && el('span', {}, tekst)]);
+  e.classList.toggle('neutralna', neutralna);
+  e.hidden = !tekst;
 }
 
 // --- Ekrany i nawigacja (hash, żeby systemowy "wstecz" Androida działał) ---
 
 const EKRANY = ['ekran-start', 'ekran-inwestycje', 'ekran-adresy', 'ekran-protokol'];
 
-function pokazEkran(id, tytul, podtytul = '', { odswiez = false } = {}) {
+function pokazEkran(id, { tytul = '', podtytul = '', wstecz = true, odswiez = false, duzyTytul = false } = {}) {
   for (const e of EKRANY) $(e).hidden = e !== id;
   document.body.classList.toggle('tryb-protokol', id === 'ekran-protokol');
   $('tytul').textContent = tytul;
   $('podtytul').textContent = podtytul;
-  $('wstecz').hidden = id === 'ekran-start' || id === 'ekran-inwestycje';
+  $('wstecz').hidden = !wstecz;
   $('odswiez').hidden = !odswiez;
+  $('zapisz-protokol').hidden = id !== 'ekran-protokol';
+  // Na ekranach z dużym tytułem mały tytuł w pasku pojawia się po przewinięciu.
+  $('pasek').classList.toggle('ukryj-tytul', duzyTytul);
   window.scrollTo(0, 0);
+  przewiniecie();
 }
+
+function przewiniecie() {
+  $('pasek').classList.toggle('przewiniety', window.scrollY > 40);
+}
+window.addEventListener('scroll', przewiniecie, { passive: true });
 
 async function trasa() {
   const [ekran, ...p] = location.hash.slice(1).split('/').map(decodeURIComponent);
@@ -102,7 +130,7 @@ async function trasa() {
     return await ekranInwestycje();
   } catch (blad) {
     console.error(blad);
-    alert(blad.message);
+    toast(blad.message, { typ: 'blad', czas: 8000 });
   }
 }
 
@@ -141,30 +169,39 @@ function zrobione(idInwestycji) {
   return adresy.size;
 }
 
+const szkieletListy = (ile = 6) => el('div', { class: 'lista' }, Array.from({ length: ile }, () => el('div', { class: 'szkielet' })));
+
 async function ekranInwestycje() {
+  if (!stan.inwestycje.length && navigator.onLine && !google.zalogowany()) {
+    pokazEkran('ekran-start', { wstecz: false });
+    return;
+  }
+  pokazEkran('ekran-inwestycje', { tytul: 'Inwestycje', wstecz: false, odswiez: true, duzyTytul: true });
   if (!stan.inwestycje.length) {
     if (!navigator.onLine) {
-      pokazEkran('ekran-inwestycje', 'Inwestycje');
-      pokazInfo('info-inwestycje', 'Brak internetu, a na tym tablecie nie ma jeszcze zapisanych inwestycji.');
+      pokazUwage('info-inwestycje', 'Brak internetu, a na tym tablecie nie ma jeszcze zapisanych inwestycji.');
+      $('lista-inwestycji').replaceChildren();
       return;
     }
-    if (!google.zalogowany()) { pokazEkran('ekran-start', 'Audyt'); return; }
-    pokazEkran('ekran-inwestycje', 'Inwestycje');
-    pokazInfo('info-inwestycje', 'Wczytuję inwestycje z Dysku…');
+    pokazUwage('info-inwestycje', '');
+    $('lista-inwestycji').replaceChildren(szkieletListy());
     await pobierzInwestycje();
   }
-  pokazEkran('ekran-inwestycje', 'Inwestycje', DYSK.inwestycje, { odswiez: true });
-  pokazInfo('info-inwestycje', '');
+  pokazUwage('info-inwestycje', '');
   renderujInwestycje();
 }
 
-function wierszInwestycji(inw) {
+function kartaInwestycji(inw) {
   const [glowna, dodatkowa] = rozbijNazwe(inw.nazwa);
+  const typy = typyZNazwy(dodatkowa || glowna);
   const ile = zrobione(inw.id);
-  return el('li', {}, el('button', { type: 'button', onclick: () => { location.hash = `i/${encodeURIComponent(inw.id)}`; } },
-    el('span', { class: 'tresc' }, el('span', { class: 'glowna' }, glowna), dodatkowa && el('span', { class: 'dodatkowa' }, dodatkowa)),
-    el('span', { class: 'prawa' }, inw.razem ? el('span', { class: 'postep' }, `${ile} / ${inw.razem}`) : null, ikona('strzalka', 'strzalka'))
-  ));
+  return el('button', { type: 'button', class: 'karta', onclick: () => { location.hash = `i/${encodeURIComponent(inw.id)}`; } },
+    el('span', { class: 'karta-nazwa' }, glowna),
+    typy.length > 0 && el('span', { class: 'karta-typy' }, typy.map(t => el('span', { class: 'pigulka' }, t))),
+    el('span', { class: 'karta-dol' }, inw.razem
+      ? [pasekPostepu(ile, inw.razem), el('span', { class: 'liczba' }, `${ile} z ${inw.razem}`)]
+      : el('span', { class: 'nowa' }, 'Jeszcze nie otwierana'))
+  );
 }
 
 function renderujInwestycje() {
@@ -173,24 +210,19 @@ function renderujInwestycje() {
   const kontener = $('lista-inwestycji');
   if (fraza) {
     const wyniki = wszystkie.filter(i => normalizuj(i.nazwa).includes(fraza));
-    kontener.replaceChildren(wyniki.length ? el('ul', { class: 'lista' }, wyniki.map(wierszInwestycji)) : el('p', { class: 'pusto' }, 'Brak inwestycji o tej nazwie.'));
+    wstaw(kontener, [wyniki.length ? el('div', { class: 'karty' }, wyniki.map(kartaInwestycji)) : el('p', { class: 'pusto' }, 'Brak inwestycji o tej nazwie.')]);
     return;
   }
   const ostatnie = stan.ostatnie.map(id => stan.inwestycje.find(i => i.id === id)).filter(Boolean).slice(0, 4);
   wstaw(kontener, [
-    ostatnie.length > 0 && el('h2', { class: 'naglowek-sekcji' }, 'Ostatnio otwierane'),
-    ostatnie.length > 0 && el('ul', { class: 'lista' }, ostatnie.map(wierszInwestycji)),
-    el('h2', { class: 'naglowek-sekcji' }, `Wszystkie inwestycje (${wszystkie.length})`),
-    el('ul', { class: 'lista' }, wszystkie.map(wierszInwestycji))
+    ostatnie.length > 0 && el('h2', { class: 'sekcja' }, 'Ostatnio otwierane'),
+    ostatnie.length > 0 && el('div', { class: 'karty' }, ostatnie.map(kartaInwestycji)),
+    el('h2', { class: 'sekcja' }, `Wszystkie · ${wszystkie.length}`),
+    el('div', { class: 'karty' }, wszystkie.map(kartaInwestycji))
   ]);
 }
 
 $('szukaj-inwestycji').addEventListener('input', e => { stan.szukajInwestycji = e.target.value; renderujInwestycje(); });
-
-function pokazInfo(id, tekst, ...dzieci) {
-  $(id).replaceChildren(tekst, ...dzieci);
-  $(id).hidden = !tekst;
-}
 
 // --- Otwarcie inwestycji: tabela montażowa + wzory, zapamiętane na offline ---
 
@@ -199,7 +231,7 @@ const czytajXlsx = bajty => {
   return wb.SheetNames.map(nazwa => ({ nazwa, wiersze: window.XLSX.utils.sheet_to_json(wb.Sheets[nazwa], { header: 1, defval: null, blankrows: false }) }));
 };
 
-async function pobierzInwestycje1(wpis) {
+async function pobierzZDysku(wpis) {
   const [folder, arkusze] = await Promise.all([
     google.folderInwestycji(wpis.id, DYSK),
     google.odczytajTabele(wpis.tabela, czytajXlsx)
@@ -220,13 +252,16 @@ async function zaladujInwestycje(id, { odswiez = false } = {}) {
   let inwestycja = await odczytaj('inwestycje', id);
   let ostrzezenie = '';
   if (wpis && navigator.onLine && (odswiez || !inwestycja)) {
-    pokazEkran('ekran-adresy', rozbijNazwe(wpis.nazwa)[0], 'Wczytuję tabelę i wzory…');
-    $('lista-adresow').replaceChildren();
+    const [glowna] = rozbijNazwe(wpis.nazwa);
+    pokazEkran('ekran-adresy', { tytul: glowna, duzyTytul: true });
+    $('nazwa-inwestycji').textContent = glowna;
+    wstaw($('podsumowanie'), [el('span', {}, 'Wczytuję tabelę i wzory z Dysku…')]);
+    $('lista-adresow').replaceChildren(...Array.from({ length: 8 }, () => el('li', { class: 'szkielet' })));
     try {
-      inwestycja = await pobierzInwestycje1(wpis);
+      inwestycja = await pobierzZDysku(wpis);
     } catch (blad) {
       if (!inwestycja) throw blad;
-      ostrzezenie = `Nie udało się odświeżyć z Dysku (${blad.message}) – pokazuję wersję zapisaną w tablecie.`;
+      ostrzezenie = `Nie udało się odświeżyć z Dysku (${blad.message}). Pokazuję wersję zapisaną w tablecie.`;
     }
   }
   if (!inwestycja) throw new Error('Tej inwestycji nie ma jeszcze w tablecie. Otwórz ją raz z internetem.');
@@ -260,9 +295,8 @@ const statusAdresu = a => {
 
 function brakujaceWzory() {
   const inw = stan.inwestycja;
-  if (!inw.folderWzorow) return `W tej inwestycji nie ma folderu „Wzory audytów”. Poproś biuro o wrzucenie wzorów protokołów.`;
-  const typy = TYPY.filter(t => stan.wynik.liczniki[t.id] > 0);
-  const brak = typy.filter(t => t.id === 'pompy'
+  if (!inw.folderWzorow) return 'W tej inwestycji nie ma folderu „Wzory audytów”. Poproś biuro o wrzucenie wzorów protokołów.';
+  const brak = TYPY.filter(t => stan.wynik.liczniki[t.id] > 0).filter(t => t.id === 'pompy'
     ? !wybierzWzor(inw.wzory, 'pompy', 'grunt') && !wybierzWzor(inw.wzory, 'pompy', 'powietrze')
     : !wybierzWzor(inw.wzory, t.id));
   return brak.length ? `Brak wzoru protokołu dla: ${brak.map(t => t.etykieta).join(', ')} (folder „${inw.folderWzorow.nazwa}”).` : '';
@@ -272,13 +306,19 @@ function renderujAdresy() {
   const inw = stan.inwestycja;
   const [glowna] = rozbijNazwe(inw.nazwa);
   const aktywne = stan.wynik.adresy.filter(a => !a.rezygnacja);
-  pokazEkran('ekran-adresy', glowna, `${aktywne.length} adresów · zrobione ${zrobione(inw.id)}`, { odswiez: true });
+  const ile = zrobione(inw.id);
+  pokazEkran('ekran-adresy', { tytul: glowna, odswiez: true, duzyTytul: true });
+  $('nazwa-inwestycji').textContent = glowna;
+  wstaw($('podsumowanie'), [pasekPostepu(ile, aktywne.length), el('span', {}, el('strong', {}, String(ile)), ` z ${aktywne.length} adresów zrobione`)]);
 
   const typy = TYPY.filter(t => stan.wynik.liczniki[t.id] > 0);
-  const filtr = (id, etykieta) => el('button', { type: 'button', 'aria-pressed': String(stan.filtrTypu === id), onclick: () => { stan.filtrTypu = id; renderujAdresy(); } }, etykieta);
-  $('filtry').replaceChildren(...(typy.length > 1 ? [filtr(null, 'Wszystkie'), ...typy.map(t => filtr(t.id, t.etykieta))] : []));
+  const segment = (id, etykieta, liczba) => el('button', { type: 'button', 'aria-pressed': String(stan.filtrTypu === id), onclick: () => { stan.filtrTypu = id; renderujAdresy(); } },
+    etykieta, el('span', { class: 'ile' }, String(liczba)));
+  wstaw($('filtry'), typy.length > 1
+    ? [segment(null, 'Wszystkie', aktywne.length), ...typy.map(t => segment(t.id, t.etykieta, aktywne.filter(a => a.typy.includes(t.id)).length))]
+    : []);
 
-  pokazInfo('info-adresy', stan.ostrzezenieOdswiezania || brakujaceWzory());
+  pokazUwage('info-adresy', stan.ostrzezenieOdswiezania || brakujaceWzory());
 
   const fraza = normalizuj(stan.szukajAdresu);
   const widoczne = stan.wynik.adresy.filter(a =>
@@ -288,12 +328,15 @@ function renderujAdresy() {
   );
   const wieleTypow = typy.length > 1;
   $('lista-adresow').replaceChildren(...widoczne.map(a => el('li', {},
-    el('button', { type: 'button', class: a.rezygnacja ? 'zrezygnowal' : null, onclick: () => wybierzAdres(a) },
-      el('span', { class: 'tresc' },
-        el('span', { class: 'glowna' }, a.adres),
-        el('span', { class: 'dodatkowa' }, [a.rezygnacja ? 'rezygnacja' : '', a.nazwisko].filter(Boolean).join(' · '))
-      ),
-      el('span', { class: 'prawa' }, wieleTypow && a.typy.map(t => el('span', { class: 'typ' }, TYP[t].skrot)), znaczekStatusu(statusAdresu(a)))
+    el('button', { type: 'button', class: `wiersz-przycisk${a.rezygnacja ? ' zrezygnowal' : ''}`, onclick: () => wybierzAdres(a) },
+      el('span', { class: 'wiersz' },
+        kolkoStatusu(statusAdresu(a)),
+        el('span', { class: 'tresc' },
+          el('span', { class: 'adres' }, a.adres),
+          el('span', { class: 'osoba' }, [a.rezygnacja ? 'Rezygnacja' : '', a.nazwisko].filter(Boolean).join(' · ') || ' ')
+        ),
+        el('span', { class: 'prawa' }, wieleTypow && a.typy.map(t => el('span', { class: 'pigulka' }, TYP[t].skrot)), ikona('dalej', 'dalej'))
+      )
     )
   )));
   $('brak-adresow').hidden = widoczne.length > 0;
@@ -308,17 +351,19 @@ $('szukaj-adresu').addEventListener('input', e => { stan.szukajAdresu = e.target
 $('pokaz-rezygnacje').addEventListener('click', () => { stan.pokazRezygnacje = !stan.pokazRezygnacje; renderujAdresy(); });
 
 $('odswiez').addEventListener('click', async () => {
-  if (!navigator.onLine) { alert('Brak internetu.'); return; }
+  if (!navigator.onLine) { toast('Brak internetu.', { typ: 'blad' }); return; }
   try {
     if (!$('ekran-adresy').hidden && stan.inwestycja) {
       await zaladujInwestycje(stan.inwestycja.id, { odswiez: true });
       renderujAdresy();
     } else {
+      $('lista-inwestycji').replaceChildren(szkieletListy());
       await pobierzInwestycje();
       renderujInwestycje();
     }
+    toast('Odświeżono z Dysku', { typ: 'ok', czas: 2000 });
   } catch (blad) {
-    alert(`Nie udało się odświeżyć: ${blad.message}`);
+    toast(`Nie udało się odświeżyć: ${blad.message}`, { typ: 'blad', czas: 6000 });
   }
 });
 
@@ -329,8 +374,10 @@ function wybierzAdres(a) {
   $('dialog-typ-tytul').textContent = a.adres;
   $('dialog-typ-opcje').replaceChildren(...a.typy.map(typ => {
     const status = stan.audyty.get(kluczProtokolu(a, typ))?.status;
-    return el('button', { type: 'button', class: 'duzy', onclick: () => { $('dialog-typ').close(); otworz(typ); } },
-      `Protokół – ${TYP[typ].etykieta}`, el('small', {}, OPIS_STATUSU[status] || 'nowy'));
+    return el('button', { type: 'button', class: 'opcja', onclick: () => { $('dialog-typ').close(); otworz(typ); } },
+      kolkoStatusu(status),
+      el('span', { class: 'tresc' }, el('strong', {}, TYP[typ].etykieta), el('small', {}, OPIS_STATUSU[status] || 'Nowy protokół')),
+      ikona('dalej', 'dalej'));
   }));
   $('dialog-typ').showModal();
 }
@@ -348,11 +395,10 @@ function pokazKolejke() {
 }
 
 const bezpiecznaNazwa = t => t.replace(/[\\/:*?"<>|]+/g, '-').trim();
+const takaSama = nazwa => n => normalizuj(n) === normalizuj(nazwa);
 
 // Protokół trafia do: INWESTYCJE_3 / AUDYTY / <inwestycja> / <PC|PV|KOLEKTORY|kotły> /
 // Brakujące foldery zakładamy; ich id zapamiętujemy, żeby nie szukać za każdym razem.
-const takaSama = nazwa => n => normalizuj(n) === normalizuj(nazwa);
-
 async function folderTypu(idInwestycji, typ) {
   const klucz = `folder|${idInwestycji}|${typ}`;
   const zapamietany = await odczytaj('ustawienia', klucz);
@@ -394,8 +440,9 @@ $('wyslij-kolejke').addEventListener('click', async () => {
       if (rekord?.pdf) { await wyslijRekord(rekord); wyslane += 1; }
       $('kolejka-opis').textContent = `Wysłano ${wyslane}…`;
     }
+    toast(`Wysłano na Dysk: ${wyslane}`, { typ: 'ok' });
   } catch (blad) {
-    alert(`Wysyłka przerwana (wysłano ${wyslane}): ${blad.message}`);
+    toast(`Wysyłka przerwana (wysłano ${wyslane}): ${blad.message}`, { typ: 'blad', czas: 8000 });
   }
   renderujAdresy();
 });
@@ -412,13 +459,6 @@ const dataLokalna = tekst => {
   return new Date(r, m - 1, d);
 };
 
-function komunikat(tekst, { blad = false } = {}, ...dzieci) {
-  const k = $('komunikat');
-  k.replaceChildren(tekst, ...dzieci);
-  k.classList.toggle('blad', blad);
-  k.hidden = !tekst;
-}
-
 function zamknijProtokol() {
   if (!stan.protokol) return;
   stan.protokol.edytor?.zniszcz();
@@ -428,15 +468,15 @@ function zamknijProtokol() {
 
 function pokazKontakt(a) {
   const telefony = a.telefon ? a.telefon.split(/[,;]/).map(t => t.trim()).filter(Boolean) : [];
-  const RODZAJ = { grunt: 'pompa gruntowa', powietrze: 'pompa powietrzna' };
+  const RODZAJ = { grunt: 'Pompa gruntowa', powietrze: 'Pompa powietrzna' };
   wstaw($('kontakt'), [
-    a.nazwisko && el('strong', {}, a.nazwisko),
-    ...telefony.map(t => {
+    a.nazwisko && el('span', { class: 'chip' }, a.nazwisko),
+    telefony.map(t => {
       const numer = t.replace(/[^\d+]/g, '');
-      return numer.length >= 9 ? el('a', { href: `tel:${numer}` }, `☎ ${t}`) : el('span', {}, t);
+      return numer.length >= 9 ? el('a', { class: 'chip', href: `tel:${numer}` }, ikona('telefon'), t) : el('span', { class: 'chip' }, t);
     }),
-    a.rodzajPompy && el('span', {}, RODZAJ[a.rodzajPompy]),
-    a.warianty.length > 1 && el('span', {}, `w tabeli też jako: ${a.warianty.filter(w => w !== a.adres).join('; ')}`)
+    a.rodzajPompy && el('span', { class: 'chip cichy' }, RODZAJ[a.rodzajPompy]),
+    a.warianty.length > 1 && el('span', { class: 'chip cichy' }, ikona('pinezka'), `w tabeli też: ${a.warianty.filter(w => w !== a.adres).join('; ')}`)
   ]);
 }
 
@@ -447,16 +487,18 @@ async function ekranProtokol(idInwestycji, idAdresu, typ) {
   const klucz = kluczProtokolu(a, typ);
   if (stan.protokol?.rekord.klucz === klucz) return;
   zamknijProtokol();
-  pokazEkran('ekran-protokol', a.adres, `${TYP[typ].etykieta} · ${rozbijNazwe(stan.inwestycja.nazwa)[0]}`);
+  pokazEkran('ekran-protokol', { tytul: a.adres, podtytul: `${TYP[typ].etykieta} · ${rozbijNazwe(stan.inwestycja.nazwa)[0]}` });
   pokazKontakt(a);
-  $('strony').replaceChildren();
-  komunikat('Otwieram wzór protokołu…');
+  $('strony').replaceChildren(el('div', { class: 'strona szkielet', style: 'aspect-ratio: 595 / 842' }));
+  pokazUwage('komunikat', '');
+  $('zapisz-protokol').disabled = true;
 
   const wzor = wybierzWzor(stan.inwestycja.wzory, typ, a.rodzajPompy);
   if (!wzor) {
-    komunikat(typ === 'pompy' && !a.rodzajPompy
+    $('strony').replaceChildren();
+    pokazUwage('komunikat', typ === 'pompy' && !a.rodzajPompy
       ? 'Nie wiem, który wzór wybrać: w tabeli brak „rodzaju pompy”, a w folderze wzorów jest kilka wzorów PC.'
-      : `Brak wzoru protokołu dla: ${TYP[typ].etykieta}. Poproś biuro o wrzucenie go do folderu „Wzory audytów” tej inwestycji.`, { blad: true });
+      : `Brak wzoru protokołu dla: ${TYP[typ].etykieta}. Poproś biuro o wrzucenie go do folderu „Wzory audytów” tej inwestycji.`);
     return;
   }
   let szablon = await odczytaj('szablony', wzor.id);
@@ -464,7 +506,7 @@ async function ekranProtokol(idInwestycji, idAdresu, typ) {
     szablon = { nazwa: wzor.nazwa, modifiedTime: wzor.modifiedTime, bajty: await google.pobierzPlik(wzor) };
     await zapisz('szablony', wzor.id, szablon);
   }
-  if (!szablon) { komunikat('Wzoru nie ma w pamięci tabletu, a nie ma internetu.', { blad: true }); return; }
+  if (!szablon) { $('strony').replaceChildren(); pokazUwage('komunikat', 'Wzoru nie ma w pamięci tabletu, a nie ma internetu.'); return; }
 
   const rekord = await odczytaj('audyty', klucz) || {
     klucz,
@@ -481,10 +523,11 @@ async function ekranProtokol(idInwestycji, idAdresu, typ) {
   };
   // Wzór zmieniony w biurze po rozpoczęciu protokołu - pismo zostało
   // narysowane na starym, więc zostajemy przy nim, jeśli jest w pamięci.
-  if (rekord.wzor !== wzor.id) {
+  if (rekord.wzor && rekord.wzor !== wzor.id) {
     const stary = await odczytaj('szablony', rekord.wzor);
     if (stary) szablon = stary;
   }
+  rekord.wzor ||= wzor.id;
   const otwarty = { rekord, szablon };
   stan.protokol = otwarty;
 
@@ -499,7 +542,8 @@ async function ekranProtokol(idInwestycji, idAdresu, typ) {
     onZmiana: kreski => zapiszSzkic(otwarty, kreski)
   });
   ustawPrzyciski();
-  komunikat(rekord.status === 'wyslany' ? 'Ten protokół jest już na Dysku. Po poprawkach stuknij „Zapisz” – plik się podmieni.' : '');
+  $('zapisz-protokol').disabled = false;
+  if (rekord.status === 'wyslany') pokazUwage('komunikat', 'Ten protokół jest już na Dysku. Po poprawkach stuknij „Zapisz” – plik się podmieni.', { neutralna: true });
 }
 
 const wpisyDla = otwarty => wyliczWpisy(otwarty.strony, { ...otwarty.rekord.dane, data: dataLokalna(otwarty.rekord.dane.data) });
@@ -522,7 +566,7 @@ async function zapiszRekord(rekord) {
     stan.audyty.set(rekord.klucz, { status: rekord.status, inwestycja: rekord.inwestycja });
   } catch (blad) {
     console.error(blad);
-    komunikat(`Nie udało się zapisać w pamięci tabletu: ${blad.message}`, { blad: true });
+    toast(`Nie udało się zapisać w pamięci tabletu: ${blad.message}`, { typ: 'blad', czas: 8000 });
   }
 }
 
@@ -545,8 +589,8 @@ $('cofnij').addEventListener('click', () => {
 $('tryb-palca').addEventListener('click', e => {
   const wlaczony = e.currentTarget.getAttribute('aria-pressed') !== 'true';
   e.currentTarget.setAttribute('aria-pressed', String(wlaczony));
-  e.currentTarget.textContent = wlaczony ? 'Palcem: piszę' : 'Palcem: przewijam';
   stan.protokol?.edytor?.ustawTrybPalca(wlaczony);
+  toast(wlaczony ? 'Pisanie palcem włączone – przewijaj dwoma palcami' : 'Palec przewija, rysik pisze', { czas: 2500 });
 });
 
 $('edytuj-dane').addEventListener('click', () => {
@@ -574,8 +618,8 @@ $('zapisz-protokol').addEventListener('click', async () => {
   if (!otwarty?.edytor) return;
   const przycisk = $('zapisz-protokol');
   przycisk.disabled = true;
-  komunikat('Zapisuję…');
-  const nastepny = () => el('button', { type: 'button', class: 'duzy glowny', onclick: () => history.back() }, 'Następny adres');
+  const trwa = toast('Zapisuję protokół…', { czas: 0 });
+  const nastepny = { etykieta: 'Następny adres', onclick: () => history.back() };
   try {
     const czcionka = await (await fetch('vendor/DejaVuSansCondensed.ttf')).arrayBuffer();
     const rekord = otwarty.rekord;
@@ -596,20 +640,23 @@ $('zapisz-protokol').addEventListener('click', async () => {
     await zapiszRekord(rekord);
 
     if (!navigator.onLine) {
-      komunikat('Zapisano w tablecie. Brak internetu – wyślesz z listy adresów, gdy będzie zasięg.', {}, nastepny());
+      trwa.remove();
+      toast('Zapisano w tablecie. Wyślesz z listy adresów, gdy będzie zasięg.', { typ: 'ok', akcja: nastepny, czas: 8000 });
       return;
     }
-    komunikat('Wysyłam na Dysk…');
     try {
       await wyslijRekord(rekord);
-      komunikat(`✔ Zapisano na Dysku: ${DYSK.audyty} / ${rozbijNazwe(stan.inwestycja.nazwa)[0]} / ${DYSK.foldery[rekord.typ]} / ${rekord.nazwaPliku}`, {}, nastepny());
+      trwa.remove();
+      toast(`Zapisano na Dysku: ${rekord.nazwaPliku}`, { typ: 'ok', akcja: nastepny, czas: 8000 });
     } catch (blad) {
       console.error(blad);
-      komunikat(`Zapisano w tablecie, ale wysyłka się nie udała (${blad.message}). Wyślesz z listy adresów.`, { blad: true }, nastepny());
+      trwa.remove();
+      toast(`Zapisano w tablecie, ale wysyłka się nie udała (${blad.message}). Wyślesz z listy adresów.`, { typ: 'blad', akcja: nastepny, czas: 10000 });
     }
   } catch (blad) {
     console.error(blad);
-    komunikat(`Nie udało się zapisać protokołu: ${blad.message}`, { blad: true });
+    trwa.remove();
+    toast(`Nie udało się zapisać protokołu: ${blad.message}`, { typ: 'blad', czas: 10000 });
   } finally {
     przycisk.disabled = false;
   }
@@ -625,6 +672,7 @@ window.addEventListener('online', pokazSiec);
 window.addEventListener('offline', pokazSiec);
 
 async function start() {
+  wstawIkony();
   pokazSiec();
   try {
     stan.inwestycje = await odczytaj('ustawienia', 'inwestycje') || [];

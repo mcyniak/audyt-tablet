@@ -3,102 +3,124 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#ffffff">
+  <meta name="theme-color" content="#f7f8fa" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0d0f12" media="(prefers-color-scheme: dark)">
   <title>Audyt</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="preload" href="vendor/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header class="pasek">
-    <button class="wstecz" id="wstecz" type="button" aria-label="Wstecz" hidden>
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
-    </button>
+  <header class="pasek" id="pasek">
+    <button class="ikona-btn" id="wstecz" type="button" aria-label="Wstecz" hidden><span data-ikona="wstecz"></span></button>
     <div class="tytuly">
-      <h1 id="tytul">Audyt</h1>
-      <p class="podtytul" id="podtytul"></p>
+      <div class="tytul" id="tytul"></div>
+      <div class="podtytul" id="podtytul"></div>
     </div>
-    <span class="siec" id="siec" hidden>offline</span>
-    <button class="ikona" id="odswiez" type="button" aria-label="Odśwież" hidden>
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg>
-    </button>
+    <span class="znacznik-offline" id="siec" hidden><span data-ikona="offline"></span>Offline</span>
+    <button class="ikona-btn" id="odswiez" type="button" aria-label="Odśwież z Dysku" hidden><span data-ikona="odswiez"></span></button>
+    <button class="btn btn-glowny" id="zapisz-protokol" type="button" hidden><span data-ikona="ok"></span>Zapisz</button>
   </header>
 
   <main>
     <!-- Logowanie -->
     <section class="ekran" id="ekran-start" hidden>
       <div class="powitanie">
-        <img src="icons/icon.svg" alt="" width="88" height="88">
-        <h2>Audyty w terenie</h2>
-        <p>Zaloguj się firmowym kontem Google, żeby zobaczyć inwestycje.</p>
-        <button type="button" class="glowny duzy" id="zaloguj">Zaloguj przez Google</button>
+        <img class="logo" src="icons/icon.svg" alt="" width="96" height="96">
+        <h1>Audyty w terenie</h1>
+        <p>Wybierz inwestycję i adres, wypełnij protokół rysikiem — trafi prosto na Dysk.</p>
+        <button type="button" class="btn btn-google" id="zaloguj">
+          <svg viewBox="0 0 48 48" aria-hidden="true" class="g"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+          Zaloguj kontem firmowym
+        </button>
         <p class="blad" id="blad-logowania" hidden></p>
       </div>
     </section>
 
-    <!-- Lista inwestycji -->
+    <!-- Inwestycje -->
     <section class="ekran" id="ekran-inwestycje" hidden>
-      <div class="szukaj"><input type="search" id="szukaj-inwestycji" placeholder="Szukaj inwestycji" autocomplete="off"></div>
-      <p class="info" id="info-inwestycje" hidden></p>
+      <div class="naglowek-ekranu">
+        <h1 class="duzy-tytul">Inwestycje</h1>
+      </div>
+      <label class="szukaj">
+        <span data-ikona="szukaj"></span>
+        <input type="search" id="szukaj-inwestycji" placeholder="Szukaj inwestycji" autocomplete="off">
+      </label>
+      <p class="uwaga" id="info-inwestycje" hidden></p>
       <div id="lista-inwestycji"></div>
     </section>
 
-    <!-- Lista adresów -->
+    <!-- Adresy -->
     <section class="ekran" id="ekran-adresy" hidden>
-      <div class="szukaj">
-        <input type="search" id="szukaj-adresu" placeholder="Szukaj adresu lub nazwiska" autocomplete="off">
-        <div class="filtry" id="filtry"></div>
+      <div class="naglowek-ekranu">
+        <h1 class="duzy-tytul" id="nazwa-inwestycji"></h1>
+        <div class="podsumowanie" id="podsumowanie"></div>
       </div>
-      <div class="pasek-info" id="kolejka" hidden>
-        <span id="kolejka-opis"></span>
-        <button type="button" class="glowny" id="wyslij-kolejke">Wyślij</button>
+      <div class="przyklejone">
+        <label class="szukaj">
+          <span data-ikona="szukaj"></span>
+          <input type="search" id="szukaj-adresu" placeholder="Szukaj adresu lub nazwiska" autocomplete="off">
+        </label>
+        <div class="segmenty" id="filtry"></div>
       </div>
-      <p class="info ostrzezenie" id="info-adresy" hidden></p>
+      <div class="baner" id="kolejka" hidden>
+        <span data-ikona="wysylka"></span>
+        <span class="baner-tekst" id="kolejka-opis"></span>
+        <button type="button" class="btn btn-maly btn-glowny" id="wyslij-kolejke">Wyślij</button>
+      </div>
+      <p class="uwaga" id="info-adresy" hidden></p>
       <ul class="lista" id="lista-adresow"></ul>
       <p class="pusto" id="brak-adresow" hidden>Nic nie pasuje do wyszukiwania.</p>
-      <button type="button" class="link" id="pokaz-rezygnacje" hidden></button>
+      <button type="button" class="btn-link" id="pokaz-rezygnacje" hidden></button>
     </section>
 
     <!-- Protokół -->
     <section class="ekran" id="ekran-protokol" hidden>
       <div class="kontakt" id="kontakt"></div>
-      <div class="narzedzia" id="narzedzia" role="toolbar" aria-label="Narzędzia">
-        <div class="grupa">
-          <button type="button" class="kolor" data-narzedzie="pioro" data-kolor="#1a3d8f" aria-pressed="true" aria-label="Pióro niebieskie"><span style="background:#1a3d8f"></span></button>
-          <button type="button" class="kolor" data-narzedzie="pioro" data-kolor="#111111" aria-pressed="false" aria-label="Pióro czarne"><span style="background:#111111"></span></button>
-          <button type="button" class="kolor" data-narzedzie="pioro" data-kolor="#c62828" aria-pressed="false" aria-label="Pióro czerwone"><span style="background:#c62828"></span></button>
-          <button type="button" data-narzedzie="gumka" aria-pressed="false">Gumka</button>
-        </div>
-        <button type="button" id="cofnij" disabled>Cofnij</button>
-        <button type="button" id="tryb-palca" aria-pressed="false" title="Dla tabletów bez rysika">Palcem: przewijam</button>
-        <span class="odstep"></span>
-        <button type="button" id="edytuj-dane">Dane</button>
-        <button type="button" class="glowny" id="zapisz-protokol">Zapisz</button>
-      </div>
-      <div class="komunikat" id="komunikat" role="status" hidden></div>
+      <div class="uwaga" id="komunikat" role="status" hidden></div>
       <div class="strony" id="strony"></div>
+
+      <div class="narzedzia" id="narzedzia" role="toolbar" aria-label="Narzędzia">
+        <button type="button" class="kolor" data-narzedzie="pioro" data-kolor="#1a3d8f" aria-pressed="true" aria-label="Pióro niebieskie"><span style="--k:#1a3d8f"></span></button>
+        <button type="button" class="kolor" data-narzedzie="pioro" data-kolor="#111111" aria-pressed="false" aria-label="Pióro czarne"><span style="--k:#111111"></span></button>
+        <button type="button" class="kolor" data-narzedzie="pioro" data-kolor="#c62828" aria-pressed="false" aria-label="Pióro czerwone"><span style="--k:#c62828"></span></button>
+        <span class="separator"></span>
+        <button type="button" class="narzedzie" data-narzedzie="gumka" aria-pressed="false" aria-label="Gumka" title="Gumka"><span data-ikona="gumka"></span></button>
+        <button type="button" class="narzedzie" id="cofnij" disabled aria-label="Cofnij" title="Cofnij"><span data-ikona="cofnij"></span></button>
+        <span class="separator"></span>
+        <button type="button" class="narzedzie" id="tryb-palca" aria-pressed="false" aria-label="Pisanie palcem" title="Pisanie palcem (bez rysika)"><span data-ikona="dlon"></span></button>
+        <button type="button" class="narzedzie" id="edytuj-dane" aria-label="Dane w protokole" title="Dane w protokole"><span data-ikona="dane"></span></button>
+      </div>
     </section>
   </main>
 
+  <div class="toasty" id="toasty" aria-live="polite"></div>
+
   <!-- Wybór protokołu, gdy pod adresem jest kilka instalacji -->
   <dialog id="dialog-typ" class="arkusz">
+    <div class="uchwyt"></div>
     <h2 id="dialog-typ-tytul"></h2>
+    <p class="arkusz-opis">Który protokół wypełniasz?</p>
     <div class="opcje" id="dialog-typ-opcje"></div>
-    <form method="dialog"><button class="link">Anuluj</button></form>
+    <form method="dialog"><button class="btn btn-szary btn-pelny">Anuluj</button></form>
   </dialog>
 
-  <dialog id="dialog-dane">
+  <dialog id="dialog-dane" class="arkusz">
+    <div class="uchwyt"></div>
     <form method="dialog" id="form-dane">
       <h2>Dane w protokole</h2>
-      <p class="info">Wpisane z tabeli. Popraw, jeśli w terenie okaże się inaczej.</p>
-      <label>Imię i nazwisko <input name="imie" autocomplete="off"></label>
-      <label>Adres miejsca instalacji <input name="adres" autocomplete="off"></label>
-      <label>Telefon <input name="telefon" inputmode="tel" autocomplete="off"></label>
-      <label>E-mail <input name="email" type="email" autocomplete="off"></label>
-      <label>Data <input name="data" type="date"></label>
+      <p class="arkusz-opis">Wpisane z tabeli. Popraw, jeśli w terenie okaże się inaczej.</p>
+      <label class="pole"><span>Imię i nazwisko</span><input name="imie" autocomplete="off"></label>
+      <label class="pole"><span>Adres miejsca instalacji</span><input name="adres" autocomplete="off"></label>
+      <div class="pola-obok">
+        <label class="pole"><span>Telefon</span><input name="telefon" inputmode="tel" autocomplete="off"></label>
+        <label class="pole"><span>Data</span><input name="data" type="date"></label>
+      </div>
+      <label class="pole"><span>E-mail</span><input name="email" type="email" autocomplete="off"></label>
       <div class="przyciski">
-        <button type="submit" value="anuluj" class="duzy">Anuluj</button>
-        <button type="submit" value="ok" class="duzy glowny">Zapisz dane</button>
+        <button type="submit" value="anuluj" class="btn btn-szary">Anuluj</button>
+        <button type="submit" value="ok" class="btn btn-glowny">Zapisz dane</button>
       </div>
     </form>
   </dialog>

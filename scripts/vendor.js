@@ -14,7 +14,10 @@ const PLIKI = [
   ['node_modules/@pdf-lib/fontkit/dist/fontkit.umd.min.js', 'public/vendor/fontkit.umd.min.js'],
   ['node_modules/perfect-freehand/dist/esm/index.mjs', 'public/vendor/perfect-freehand.mjs'],
   // Czcionka z polskimi znakami do wpisywania danych w PDF (licencja DejaVu - wolna).
-  ['node_modules/dejavu-fonts-ttf/ttf/DejaVuSansCondensed.ttf', 'public/vendor/DejaVuSansCondensed.ttf']
+  ['node_modules/dejavu-fonts-ttf/ttf/DejaVuSansCondensed.ttf', 'public/vendor/DejaVuSansCondensed.ttf'],
+  // Czcionka interfejsu (licencja OFL) - lokalnie, bo w terenie bywa offline.
+  ['node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2', 'public/vendor/inter-latin.woff2'],
+  ['node_modules/@fontsource-variable/inter/files/inter-latin-ext-wght-normal.woff2', 'public/vendor/inter-latin-ext.woff2']
 ];
 
 fs.mkdirSync(path.join(katalog, 'public/vendor'), { recursive: true });

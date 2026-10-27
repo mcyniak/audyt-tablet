@@ -2,7 +2,7 @@
 // startowała w terenie bez internetu. Strategia: najpierw sieć (świeża
 // wersja po aktualizacji), przy braku sieci - kopia z pamięci.
 // Zmień WERSJA przy każdym wydaniu, żeby stare pliki zostały wyrzucone.
-const WERSJA = 'audyt-v4';
+const WERSJA = 'audyt-v5';
 const PLIKI = [
   './',
   'index.html',
@@ -11,6 +11,9 @@ const PLIKI = [
   'config.js',
   'src/google.js',
   'src/wzory.js',
+  'src/ikony.js',
+  'vendor/inter-latin.woff2',
+  'vendor/inter-latin-ext.woff2',
   'src/tabela.js',
   'src/magazyn.js',
   'src/wypelnianie.js',
