@@ -95,11 +95,12 @@ export const PYTANIA_PV = [
   {
     // Tylko "rezygnuje" - brak odpowiedzi niczego nie zmienia, żeby audytor
     // nie cofnął przypadkiem rezygnacji wpisanej przez biuro. Na protokole:
-    // pismo w linii "Ja niżej podpisany ..." sekcji rezygnacji.
+    // cokolwiek napisane w sekcji rezygnacji (od jej nagłówka do końca strony) -
+    // imię w "Ja niżej podpisany", skreślenie "niepotrzebne skreślić", podpis.
     id: 'rezygnacja',
     pytanie: 'Rezygnacja',
     kolumna: n => n.startsWith('rezyg'),
-    obszarNaWzorze: 'ja nizej podpisany',
+    obszarNaWzorze: 'rezygnacja z udzialu',
     opcje: [{ ...TAK, etykieta: 'Klient rezygnuje' }]
   }
 ];
@@ -286,7 +287,8 @@ export function linieWzoru(strony) {
 }
 
 // Gdzie na wzorze są odpowiedzi na pytania:
-// { [id]: { kratki: [{ opcja, kratka }] } } albo { [id]: { obszar } } (rezygnacja).
+// { [id]: { kratki: [{ opcja, kratka }] } } albo { [id]: { obszar } } (rezygnacja:
+// pas strony pod nagłówkiem sekcji do najniższej linii tekstu na tej stronie).
 // Kratki pytania: kolejne kratki od linii z pytaniem, dopóki podpis pasuje do
 // którejś opcji i opcja się nie powtarza (następne pytanie też ma TAK/NIE).
 export function pytaniaNaWzorze(strony) {
@@ -295,8 +297,17 @@ export function pytaniaNaWzorze(strony) {
   const wynik = {};
   for (const p of PYTANIA_PV) {
     if (p.obszarNaWzorze) {
-      const l = linie.find(x => normalizuj(x.tekst).includes(p.obszarNaWzorze));
-      if (l) wynik[p.id] = { obszar: { strona: l.strona, x0: l.x0, x1: l.x1, y: l.y } };
+      const i = linie.findIndex(x => normalizuj(x.tekst).includes(p.obszarNaWzorze));
+      if (i < 0) continue;
+      const naglowek = linie[i];
+      const nizej = linie.slice(i + 1).filter(x => x.strona === naglowek.strona);
+      wynik[p.id] = { obszar: {
+        strona: naglowek.strona,
+        x0: 0,
+        x1: strony[naglowek.strona].szer,
+        yDol: nizej.length ? Math.min(...nizej.map(x => x.y)) - 8 : 0,
+        yGora: naglowek.y - 2
+      } };
       continue;
     }
     for (const [i, l] of (p.naWzorze ? linie.entries() : [])) {
@@ -349,9 +360,9 @@ export function odpowiedziZProtokolu(mapa, kreski, strony) {
     const m = mapa[p.id];
     if (!m) continue;
     if (m.obszar) {
-      const { strona, x0, x1, y } = m.obszar;
+      const { strona, x0, x1, yDol, yGora } = m.obszar;
       const wys = strony[strona].wys;
-      if (tusz(strona, { x0, x1, y0: wys - (y + 12), y1: wys - (y - 4) }) >= MIN_TUSZU_OBSZARU) odpowiedzi[p.id] = { opcje: ['tak'], dopisek: '' };
+      if (tusz(strona, { x0, x1, y0: wys - yGora, y1: wys - yDol }) >= MIN_TUSZU_OBSZARU) odpowiedzi[p.id] = { opcje: ['tak'], dopisek: '' };
       continue;
     }
     const zaznaczone = m.kratki

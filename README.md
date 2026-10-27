@@ -83,7 +83,7 @@ to geometria, nie odczyt pisma. Kratki pytań znajdowane są we wzorze automatyc
 
 Pytania: miejsce montażu PV, zwiększenie mocy umownej, prywatna/istniejąca
 instalacja PV, pokrycie dachowe, zmniejszenie mocy PV, usunięcie magazynu,
-rezygnacja (pismo w linii „Ja niżej podpisany” sekcji rezygnacji). Miejsca montażu
+rezygnacja (cokolwiek napisane lub skreślone w sekcji rezygnacji). Miejsca montażu
 magazynu energii nie ma na wzorze - o nie okno pyta przyciskami.
 
 - Okno przed zapisem pokazuje odczyt z protokołu tylko do wglądu; poprawia się na

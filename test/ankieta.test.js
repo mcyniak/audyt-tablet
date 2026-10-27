@@ -136,7 +136,10 @@ const WZOR = [{
     el('☐', 40, 561, 8.6), el(' Dach budynku gospodarczego, zastosowanie budynku: ……', 49, 561),
     el('3. Rodzaj dachu', 40, 530, 70),
     el('☐', 40, 517, 10), el('Dach dwuspadowy', 51, 517),
-    el('Ja niżej podpisany ……………………………………', 40, 200, 480)
+    el('16. Rezygnacja z udziału w projekcie/odmowa wpuszczenia audytora', 40, 215, 350),
+    el('Ja niżej podpisany ……………………………………', 40, 200, 480),
+    el('Rezygnuję z udziału w projekcie / Nie wyrażam zgody na przeprowadzenie wizji lokalnej', 40, 180, 360),
+    el('Czytelny podpis Właściciela', 350, 150, 120)
   ]
 }];
 
@@ -153,7 +156,7 @@ test('wzór: kratki pytań kończą się na powtórzonej opcji albo obcym podpis
   assert.deepEqual(mapa.zmniejszycMoc.kratki.map(k => [k.opcja, k.kratka.y]), [['nie', 700], ['tak', 687]]);
   assert.deepEqual(mapa.miejscePv.kratki.map(k => k.opcja), ['mieszkalny', 'grunt', 'gospodarczy']);
   assert.equal(mapa.pokrycie, undefined);
-  assert.deepEqual(mapa.rezygnacja.obszar, { strona: 0, x0: 40, x1: 520, y: 200 });
+  assert.deepEqual(mapa.rezygnacja.obszar, { strona: 0, x0: 0, x1: 595, yDol: 142, yGora: 213 });
 });
 
 // Kreska w układzie edytora: y od góry strony.
@@ -172,6 +175,14 @@ test('odpowiedzi z kresek: ptaszek w kratce, pismo obok się nie liczy', () => {
   const { odpowiedzi, niejasne } = odpowiedziZProtokolu(mapa, kreski, WZOR);
   assert.deepEqual(odpowiedzi, { zmniejszycMoc: odp('tak'), miejscePv: odp('mieszkalny', 'grunt'), rezygnacja: odp('tak') });
   assert.deepEqual(niejasne, []);
+});
+
+test('rezygnacja: samo skreślenie "niepotrzebne skreślić" też się liczy, pismo nad sekcją nie', () => {
+  const mapa = pytaniaNaWzorze(WZOR);
+  const skreslenie = [[kreska([215, 183], [300, 182], [400, 184])]];
+  assert.deepEqual(odpowiedziZProtokolu(mapa, skreslenie, WZOR).odpowiedzi, { rezygnacja: odp('tak') });
+  const nadSekcja = [[kreska([100, 240], [300, 240])]];
+  assert.deepEqual(odpowiedziZProtokolu(mapa, nadSekcja, WZOR).odpowiedzi, {});
 });
 
 test('odpowiedzi z kresek: TAK i NIE naraz to niejasne, kropka to nie zaznaczenie', () => {
@@ -210,7 +221,13 @@ for (const plik of lokalne.szablonyPv || []) {
     const strony = await tekstSzablonu(dokument);
     const mapa = pytaniaNaWzorze(strony);
     for (const p of PYTANIA_PV.filter(x => x.naWzorze)) assert.ok(mapa[p.id]?.kratki.length >= 2, `brak kratek: ${p.pytanie}`);
-    assert.ok(mapa.rezygnacja?.obszar, 'brak linii rezygnacji');
+    assert.ok(mapa.rezygnacja?.obszar, 'brak sekcji rezygnacji');
+    // Skreślenie w linii "Rezygnuję z udziału w projekcie / Nie wyrażam zgody ..."
+    const { strona: sr } = mapa.rezygnacja.obszar;
+    const linia = linieWzoru(strony).find(l => l.strona === sr && /^Rezygnuj/.test(l.tekst));
+    const skreslenie = strony.map(() => []);
+    skreslenie[sr].push({ punkty: [[linia.x1 - 160, strony[sr].wys - (linia.y + 3), 0.5], [linia.x1, strony[sr].wys - (linia.y + 3), 0.5]] });
+    assert.deepEqual(odpowiedziZProtokolu(mapa, skreslenie, strony).odpowiedzi, { rezygnacja: odp('tak') });
     for (const [id, { kratki }] of Object.entries(mapa).filter(([, m]) => m.kratki)) {
       for (const { opcja, kratka: k } of kratki) {
         const kreski = strony.map(() => []);
