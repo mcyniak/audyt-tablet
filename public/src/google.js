@@ -158,13 +158,41 @@ export async function wartosciArkusza(idTabeli, nazwaArkusza) {
   return (await (await api(`https://sheets.googleapis.com/v4/spreadsheets/${idTabeli}/values/${zakres}?${p}`)).json()).values || [];
 }
 
-// RAW: "tak" zostaje tekstem, true/false trafia do pól wyboru jako wartość logiczna.
-export async function zapiszKomorki(idTabeli, dane) {
+// RAW: "tak" zostaje tekstem, true/false trafia do pól wyboru jako wartość
+// logiczna. USER_ENTERED tylko dla formuł.
+export async function zapiszKomorki(idTabeli, dane, opcja = 'RAW') {
   await api(`https://sheets.googleapis.com/v4/spreadsheets/${idTabeli}/values:batchUpdate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ valueInputOption: 'RAW', data: dane })
+    body: JSON.stringify({ valueInputOption: opcja, data: dane })
   });
+}
+
+// --- Tabela materiałowa (src/tabela-materialowa.js) ---
+
+export async function arkuszeWFolderze(idFolderu) {
+  return lista(`'${idFolderu}' in parents and mimeType = '${MIME.arkusz}' and trashed = false`, { pola: 'id,name,modifiedTime' });
+}
+
+export async function utworzArkuszGoogle(idFolderu, nazwa) {
+  return (await (await api(`${DRIVE}/files?supportsAllDrives=true&fields=id`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: nazwa, mimeType: MIME.arkusz, parents: [idFolderu] })
+  })).json()).id;
+}
+
+export async function arkuszeTabeli(idTabeli) {
+  const meta = await (await api(`https://sheets.googleapis.com/v4/spreadsheets/${idTabeli}?fields=sheets.properties(sheetId,title,gridProperties)`)).json();
+  return meta.sheets.map(s => s.properties);
+}
+
+export async function zmianyTabeli(idTabeli, requests) {
+  return (await api(`https://sheets.googleapis.com/v4/spreadsheets/${idTabeli}:batchUpdate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requests })
+  })).json();
 }
 
 export function zArkuszyGoogle(nazwy, zakresy) {
@@ -191,8 +219,28 @@ async function utworzFolder(idRodzica, nazwa) {
 
 // Podfolder pasujący do `pasuje(nazwa)`, a jeśli go nie ma - nowy o nazwie `nowa`.
 export async function folderPodrzedny(idRodzica, pasuje, nowa) {
+  return await znajdzFolder(idRodzica, pasuje) || utworzFolder(idRodzica, nowa);
+}
+
+// Jak wyżej, ale bez zakładania - null, gdy folderu nie ma.
+export async function znajdzFolder(idRodzica, pasuje) {
   const foldery = await lista(`'${idRodzica}' in parents and mimeType = '${MIME.folder}' and trashed = false`);
-  return foldery.find(f => pasuje(f.name))?.id || utworzFolder(idRodzica, nowa);
+  return foldery.find(f => pasuje(f.name))?.id || null;
+}
+
+export async function plikiPdf(idFolderu) {
+  return lista(`'${idFolderu}' in parents and mimeType = '${MIME.pdf}' and trashed = false`, { pola: 'id,name,modifiedTime,webViewLink,parents' });
+}
+
+// null, gdy plik skasowany albo niedostępny.
+export async function metadanePliku(id) {
+  try {
+    const plik = await (await api(`${DRIVE}/files/${id}?supportsAllDrives=true&fields=id,name,modifiedTime,webViewLink,parents,trashed`)).json();
+    return plik.trashed ? null : plik;
+  } catch (blad) {
+    if (blad.status === 404) return null;
+    throw blad;
+  }
 }
 
 // Z idPliku - nadpisanie poprzedniej wersji (poprawiony protokół nie tworzy
@@ -204,7 +252,7 @@ export async function wyslijPlik({ plik, nazwa, idFolderu, idPliku }) {
   tresc.append('metadata', new Blob([JSON.stringify(metadane)], { type: 'application/json' }));
   tresc.append('file', plik);
   const url = idPliku
-    ? `https://www.googleapis.com/upload/drive/v3/files/${idPliku}?uploadType=multipart&supportsAllDrives=true&fields=id,webViewLink`
-    : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,webViewLink';
+    ? `https://www.googleapis.com/upload/drive/v3/files/${idPliku}?uploadType=multipart&supportsAllDrives=true&fields=id,webViewLink,modifiedTime`
+    : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,webViewLink,modifiedTime';
   return (await api(url, { method: idPliku ? 'PATCH' : 'POST', body: tresc })).json();
 }

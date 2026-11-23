@@ -4,8 +4,11 @@ import { odczytaj, zapisz, usun, wszystkie } from './src/magazyn.js';
 import { wyliczWpisy, tekstSzablonu } from './src/wypelnianie.js';
 import { utworzEdytor } from './src/edytor.js';
 import { zbudujPdf } from './src/eksport.js';
-import { wybierzWzor } from './src/wzory.js';
+import { wybierzWzor, wzorWniosku, rozpoznajWzor } from './src/wzory.js';
 import { PYTANIA_PV, kolumnyPytan, odpowiedziZWiersza, znajdzWiersz, zmianyWiersza, pytaniaNaWzorze, odpowiedziZProtokolu } from './src/ankieta.js';
+import { polaWzoru, wartosciPoczatkowe, pozycjeWniosku, dataCzytelna, zalacznikiStanu, stanZPdf } from './src/wniosek.js';
+import * as tabelaMat from './src/tabela-materialowa.js';
+import { przypiszKreski, podpisPisma, wycinekPola, odczytajIlosci, zlyKlucz } from './src/odczyt-pisma.js';
 import { ikona, wstawIkony } from './src/ikony.js';
 import * as google from './src/google.js';
 import { DYSK } from './config.js';
@@ -22,7 +25,9 @@ const stan = {
   ostatnie: [], // id ostatnio otwieranych inwestycji
   inwestycja: null, // otwarta: { id, nazwa, tabela, arkusze, wzory, folderWzorow, pobrano }
   wynik: null, // zbudujListeAdresow dla otwartej inwestycji
-  audyty: new Map(), // klucz protokołu -> { status, inwestycja }
+  audyty: new Map(), // klucz protokołu/wniosku -> { status, inwestycja, typ, zatwierdzono }
+  tryb: 'audyty', // lista adresów: 'audyty' albo 'wnioski' (wnioski materiałowe)
+  statusyWnioskow: new Map(), // kluczWniosku(adres, rodzaj) -> status z arkusza Wnioski tabeli materiałowej
   szukajInwestycji: '',
   szukajAdresu: '',
   filtrTypu: null,
@@ -92,9 +97,9 @@ function toast(tekst, { typ = 'info', akcja = null, czas = 4000 } = {}) {
   return t;
 }
 
-function pokazUwage(id, tekst, { neutralna = false } = {}) {
+function pokazUwage(id, tekst, { neutralna = false, znak = null } = {}) {
   const e = $(id);
-  wstaw(e, [tekst && ikona(neutralna ? 'wysylka' : 'uwaga'), tekst && el('span', {}, tekst)]);
+  wstaw(e, [tekst && ikona(znak || (neutralna ? 'wysylka' : 'uwaga')), tekst && el('span', {}, tekst)]);
   e.classList.toggle('neutralna', neutralna);
   e.hidden = !tekst;
 }
@@ -102,6 +107,7 @@ function pokazUwage(id, tekst, { neutralna = false } = {}) {
 // --- Ekrany i nawigacja (hash, żeby systemowy "wstecz" Androida działał) ---
 
 const EKRANY = ['ekran-start', 'ekran-inwestycje', 'ekran-adresy', 'ekran-protokol'];
+const TYLKO_ARKUSZ_GOOGLE = 'tabela montażowa jest plikiem Excela – aplikacja wpisuje tylko do Arkuszy Google';
 
 function pokazEkran(id, { tytul = '', podtytul = '', wstecz = true, odswiez = false, duzyTytul = false } = {}) {
   for (const e of EKRANY) $(e).hidden = e !== id;
@@ -111,6 +117,8 @@ function pokazEkran(id, { tytul = '', podtytul = '', wstecz = true, odswiez = fa
   $('wstecz').hidden = !wstecz;
   $('odswiez').hidden = !odswiez;
   $('zapisz-protokol').hidden = id !== 'ekran-protokol';
+  $('zatwierdz-wniosek').hidden = true;
+  document.body.classList.remove('tryb-wniosek', 'wniosek-zablokowany');
   // Na ekranach z dużym tytułem mały tytuł w pasku pojawia się po przewinięciu.
   $('pasek').classList.toggle('ukryj-tytul', duzyTytul);
   window.scrollTo(0, 0);
@@ -124,10 +132,11 @@ window.addEventListener('scroll', przewiniecie, { passive: true });
 
 async function trasa() {
   const [ekran, ...p] = location.hash.slice(1).split('/').map(decodeURIComponent);
-  if (ekran !== 'p') zamknijProtokol();
+  if (ekran !== 'p' && ekran !== 'w') zamknijProtokol();
   try {
     if (ekran === 'i') return await ekranAdresy(p[0]);
     if (ekran === 'p') return await ekranProtokol(p[0], p[1], p[2]);
+    if (ekran === 'w') return await ekranWniosek(p[0], p[1], p[2]);
     return await ekranInwestycje();
   } catch (blad) {
     console.error(blad);
@@ -165,6 +174,7 @@ async function pobierzInwestycje() {
 function zrobione(idInwestycji) {
   const adresy = new Set();
   for (const [klucz, a] of stan.audyty) {
+    if (a.typ === 'wniosek') continue;
     if (a.inwestycja === idInwestycji && (a.status === 'zapisany' || a.status === 'wyslany')) adresy.add(klucz.split('|')[1]);
   }
   return adresy.size;
@@ -242,7 +252,14 @@ async function pobierzZDysku(wpis) {
     const zapisany = await odczytaj('szablony', w.id);
     if (zapisany?.modifiedTime !== w.modifiedTime) await zapisz('szablony', w.id, { nazwa: w.nazwa, modifiedTime: w.modifiedTime, bajty: await google.pobierzPlik(w) });
   }
-  const inwestycja = { id: wpis.id, nazwa: wpis.nazwa, tabela: wpis.tabela, arkusze, ...folder, pobrano: new Date().toISOString() };
+  // Statusy wniosków z tabeli materiałowej - jej brak albo błąd nie blokuje audytów.
+  let wnioski = [];
+  try {
+    wnioski = await tabelaMat.odczytajWnioski(google, await tabelaMat.tabelaMaterialowa(google, wpis.id, { utworz: false }));
+  } catch (blad) {
+    console.warn('Nie odczytano tabeli materiałowej', blad);
+  }
+  const inwestycja = { id: wpis.id, nazwa: wpis.nazwa, tabela: wpis.tabela, arkusze, wnioski, ...folder, pobrano: new Date().toISOString() };
   await zapisz('inwestycje', wpis.id, inwestycja);
   return inwestycja;
 }
@@ -272,6 +289,7 @@ async function zaladujInwestycje(id, { odswiez = false } = {}) {
   stan.szukajAdresu = '';
   $('szukaj-adresu').value = '';
   stan.ostrzezenieOdswiezania = ostrzezenie;
+  stan.statusyWnioskow = tabelaMat.statusyWnioskow(inwestycja.wnioski);
 
   stan.ostatnie = [id, ...stan.ostatnie.filter(x => x !== id)].slice(0, 10);
   if (wpis) wpis.razem = stan.wynik.adresy.filter(a => !a.rezygnacja).length;
@@ -294,6 +312,25 @@ const statusAdresu = a => {
   return s.some(Boolean) ? 'szkic' : null;
 };
 
+// Wniosek jest osobny dla każdej instalacji pod adresem (PV i PC to dwa wnioski).
+const kluczWniosku = (idInwestycji, idAdresu, typ) => `${idInwestycji}|${idAdresu}|wniosek|${typ}`;
+// Rodzaj w tabeli materiałowej i nazwa folderu: PV, PC, KOLEKTORY, kotły.
+const rodzajWniosku = typ => DYSK.foldery[typ] || typ;
+
+// Wniosek: zatwierdzony (w tablecie albo w arkuszu z innego urządzenia),
+// czeka na wysyłkę, rozpoczęty, albo brak.
+function statusWniosku(a, typ) {
+  const lokalny = stan.audyty.get(kluczWniosku(stan.inwestycja.id, a.id, typ));
+  const zArkusza = stan.statusyWnioskow.get(tabelaMat.kluczWniosku(a.adres, rodzajWniosku(typ)));
+  if (lokalny?.zatwierdzono || (zArkusza?.zatwierdzony && (!lokalny || lokalny.status === 'wyslany'))) return 'zatwierdzony';
+  if (lokalny?.status === 'zapisany') return 'zapisany';
+  return lokalny?.status || zArkusza ? 'rozpoczety' : null;
+}
+
+const OPIS_WNIOSKU = { zatwierdzony: 'Zatwierdzony', zapisany: 'Czeka na wysyłkę', rozpoczety: 'W trakcie' };
+const kolkoWniosku = status => el('span', { class: `kolko ${{ zatwierdzony: 'wyslany', zapisany: 'zapisany', rozpoczety: 'szkic' }[status] || ''}`, title: OPIS_WNIOSKU[status] || 'Nie rozpoczęty' },
+  status && ikona({ zatwierdzony: 'klodka', zapisany: 'wysylka', rozpoczety: 'pioro' }[status]));
+
 function brakujaceWzory() {
   const inw = stan.inwestycja;
   if (!inw.folderWzorow) return 'W tej inwestycji nie ma folderu „Wzory audytów”. Poproś biuro o wrzucenie wzorów protokołów.';
@@ -307,19 +344,39 @@ function renderujAdresy() {
   const inw = stan.inwestycja;
   const [glowna] = rozbijNazwe(inw.nazwa);
   const aktywne = stan.wynik.adresy.filter(a => !a.rezygnacja);
-  const ile = zrobione(inw.id);
+  const wnioski = stan.tryb === 'wnioski';
+  const typy = TYPY.filter(t => stan.wynik.liczniki[t.id] > 0);
+  // Wnioski: najpierw rodzaj instalacji (PV / PC), potem adres - bez "Wszystkie".
+  if (wnioski && !typy.some(t => t.id === stan.filtrTypu)) stan.filtrTypu = typy.find(t => wzorWniosku(inw.wzory, t.id))?.id || typy[0]?.id || null;
+  const typWniosku = wnioski ? stan.filtrTypu : null;
+  const sWniosku = a => statusWniosku(a, typWniosku);
   pokazEkran('ekran-adresy', { tytul: glowna, odswiez: true, duzyTytul: true });
   $('nazwa-inwestycji').textContent = glowna;
-  wstaw($('podsumowanie'), [pasekPostepu(ile, aktywne.length), el('span', {}, el('strong', {}, String(ile)), ` z ${aktywne.length} adresów zrobione`)]);
+  if (wnioski) {
+    const adresyTypu = aktywne.filter(a => a.typy.includes(typWniosku));
+    const zatwierdzone = adresyTypu.filter(a => sWniosku(a) === 'zatwierdzony').length;
+    const wTrakcie = adresyTypu.filter(a => ['rozpoczety', 'zapisany'].includes(sWniosku(a))).length;
+    wstaw($('podsumowanie'), [pasekPostepu(zatwierdzone, adresyTypu.length), el('span', {}, el('strong', {}, String(zatwierdzone)), ` z ${adresyTypu.length} wniosków zatwierdzonych`, wTrakcie ? ` · ${wTrakcie} w trakcie` : '')]);
+  } else {
+    const ile = zrobione(inw.id);
+    wstaw($('podsumowanie'), [pasekPostepu(ile, aktywne.length), el('span', {}, el('strong', {}, String(ile)), ` z ${aktywne.length} adresów zrobione`)]);
+  }
+  // Przełącznik audyty / wnioski - tylko gdy inwestycja ma jakiś wzór wniosku.
+  const przelacznik = (tryb, etykieta) => el('button', { type: 'button', 'aria-pressed': String(stan.tryb === tryb), onclick: () => ustawTryb(tryb) }, etykieta);
+  const maWnioski = inw.wzory.some(w => rozpoznajWzor(w.nazwa).typ === 'wniosek');
+  wstaw($('tryb'), maWnioski || wnioski ? [przelacznik('audyty', 'Audyty'), przelacznik('wnioski', 'Wnioski materiałowe')] : []);
 
-  const typy = TYPY.filter(t => stan.wynik.liczniki[t.id] > 0);
   const segment = (id, etykieta, liczba) => el('button', { type: 'button', 'aria-pressed': String(stan.filtrTypu === id), onclick: () => { stan.filtrTypu = id; renderujAdresy(); } },
     etykieta, el('span', { class: 'ile' }, String(liczba)));
-  wstaw($('filtry'), typy.length > 1
-    ? [segment(null, 'Wszystkie', aktywne.length), ...typy.map(t => segment(t.id, t.etykieta, aktywne.filter(a => a.typy.includes(t.id)).length))]
-    : []);
+  const segmentTypu = t => segment(t.id, t.etykieta, aktywne.filter(a => a.typy.includes(t.id)).length);
+  wstaw($('filtry'), wnioski
+    ? typy.map(segmentTypu)
+    : typy.length > 1 ? [segment(null, 'Wszystkie', aktywne.length), ...typy.map(segmentTypu)] : []);
 
-  pokazUwage('info-adresy', stan.ostrzezenieOdswiezania || brakujaceWzory());
+  const nazwaRodzaju = TYP[typWniosku]?.etykieta || '';
+  pokazUwage('info-adresy', stan.ostrzezenieOdswiezania || (wnioski
+    ? (wzorWniosku(inw.wzory, typWniosku) ? '' : `Brak wzoru wniosku materiałowego${nazwaRodzaju ? ` dla: ${nazwaRodzaju}` : ''}. Wrzuć go do folderu „${inw.folderWzorow?.nazwa || 'Wzory audytów'}” tej inwestycji (plik ze słowem „wniosek” i rodzajem instalacji w nazwie, np. „Wniosek materiałowy ${rodzajWniosku(typWniosku || 'pv_me')}.pdf”) i odśwież.`)
+    : brakujaceWzory()));
 
   const fraza = normalizuj(stan.szukajAdresu);
   const widoczne = stan.wynik.adresy.filter(a =>
@@ -331,12 +388,12 @@ function renderujAdresy() {
   $('lista-adresow').replaceChildren(...widoczne.map(a => el('li', {},
     el('button', { type: 'button', class: `wiersz-przycisk${a.rezygnacja ? ' zrezygnowal' : ''}`, onclick: () => wybierzAdres(a) },
       el('span', { class: 'wiersz' },
-        kolkoStatusu(statusAdresu(a)),
+        wnioski ? kolkoWniosku(sWniosku(a)) : kolkoStatusu(statusAdresu(a)),
         el('span', { class: 'tresc' },
           el('span', { class: 'adres' }, a.adres),
           el('span', { class: 'osoba' }, [a.rezygnacja ? 'Rezygnacja' : '', a.nazwisko].filter(Boolean).join(' · ') || ' ')
         ),
-        el('span', { class: 'prawa' }, wieleTypow && a.typy.map(t => el('span', { class: 'pigulka' }, TYP[t].skrot)), ikona('dalej', 'dalej'))
+        el('span', { class: 'prawa' }, wieleTypow && !wnioski && a.typy.map(t => el('span', { class: 'pigulka' }, TYP[t].skrot)), ikona('dalej', 'dalej'))
       )
     )
   )));
@@ -368,7 +425,15 @@ $('odswiez').addEventListener('click', async () => {
   }
 });
 
+async function ustawTryb(tryb) {
+  if (tryb !== stan.tryb) stan.filtrTypu = null;
+  stan.tryb = tryb;
+  renderujAdresy();
+  await zapisz('ustawienia', 'tryb', tryb);
+}
+
 function wybierzAdres(a) {
+  if (stan.tryb === 'wnioski') { location.hash = `w/${encodeURIComponent(stan.inwestycja.id)}/${encodeURIComponent(a.id)}/${stan.filtrTypu}`; return; }
   const otworz = typ => { location.hash = `p/${encodeURIComponent(stan.inwestycja.id)}/${encodeURIComponent(a.id)}/${typ}`; };
   if (a.typy.length === 1) { otworz(a.typy[0]); return; }
   // Kilka instalacji pod adresem - osobny protokół dla każdej.
@@ -391,7 +456,7 @@ function pokazKolejke() {
   const ile = czekajace().length;
   $('kolejka').hidden = ile === 0;
   if (!ile) return;
-  $('kolejka-opis').textContent = `${ile} ${ile === 1 ? 'protokół czeka' : 'protokoły czekają'} na wysyłkę na Dysk`;
+  $('kolejka-opis').textContent = `Czeka na wysyłkę na Dysk: ${ile}`;
   $('wyslij-kolejke').disabled = !navigator.onLine;
 }
 
@@ -399,25 +464,39 @@ const bezpiecznaNazwa = t => t.replace(/[\\/:*?"<>|]+/g, '-').trim();
 const takaSama = nazwa => n => normalizuj(n) === normalizuj(nazwa);
 
 // Protokół i zdjęcia trafiają do:
-// INWESTYCJE_3 / AUDYTY / <inwestycja> / <PC|PV|KOLEKTORY|kotły> / <adres> /
+//   INWESTYCJE_3 / AUDYTY / <inwestycja> / <PC|PV|KOLEKTORY|kotły> / <adres> /
+// wnioski materiałowe do folderu samej inwestycji:
+//   INWESTYCJE_3 / <inwestycja> / MATERIAŁÓWKI / <PV|PC|...> / <adres> /
 // Brakujące foldery zakładamy; id folderu typu zapamiętujemy w ustawieniach,
 // id folderu adresu w protokole (rekord.drive.folder).
-async function folderTypu(idInwestycji, typ) {
-  const klucz = `folder|${idInwestycji}|${typ}`;
+const kluczFolderu = rekord => rekord.typ === 'wniosek'
+  ? `folder|${rekord.inwestycja}|wniosek|${rekord.instalacja}`
+  : `folder|${rekord.inwestycja}|${rekord.typ}`;
+
+async function folderTypu(rekord) {
+  const klucz = kluczFolderu(rekord);
   const zapamietany = await odczytaj('ustawienia', klucz);
   if (zapamietany) return zapamietany;
-  const inw = await odczytaj('inwestycje', idInwestycji);
-  const idDysku = await google.idDysku(DYSK.inwestycje);
-  const idAudytow = await google.folderPodrzedny(idDysku, takaSama(DYSK.audyty), DYSK.audyty);
-  const idInw = await google.folderPodrzedny(idAudytow, takaSama(inw.nazwa), bezpiecznaNazwa(inw.nazwa));
-  const idTypu = await google.folderPodrzedny(idInw, takaSama(DYSK.foldery[typ]), DYSK.foldery[typ]);
+  let idTypu;
+  if (rekord.typ === 'wniosek') {
+    // Id inwestycji to id jej folderu w INWESTYCJE_3.
+    const idMat = await google.folderPodrzedny(rekord.inwestycja, takaSama(DYSK.materialowki), DYSK.materialowki);
+    const rodzaj = rodzajWniosku(rekord.instalacja);
+    idTypu = await google.folderPodrzedny(idMat, takaSama(rodzaj), rodzaj);
+  } else {
+    const inw = await odczytaj('inwestycje', rekord.inwestycja);
+    const idDysku = await google.idDysku(DYSK.inwestycje);
+    const idAudytow = await google.folderPodrzedny(idDysku, takaSama(DYSK.audyty), DYSK.audyty);
+    const idInw = await google.folderPodrzedny(idAudytow, takaSama(inw.nazwa), bezpiecznaNazwa(inw.nazwa));
+    idTypu = await google.folderPodrzedny(idInw, takaSama(DYSK.foldery[rekord.typ]), DYSK.foldery[rekord.typ]);
+  }
   await zapisz('ustawienia', klucz, idTypu);
   return idTypu;
 }
 
 async function folderAdresu(rekord) {
   const nazwa = bezpiecznaNazwa(rekord.adres);
-  return google.folderPodrzedny(await folderTypu(rekord.inwestycja, rekord.typ), takaSama(nazwa), nazwa);
+  return google.folderPodrzedny(await folderTypu(rekord), takaSama(nazwa), nazwa);
 }
 
 const kluczZdjecia = (rekord, z) => `${rekord.klucz}|${z.id}`;
@@ -428,7 +507,7 @@ async function wyslijRekord(rekord, ponowienie = false) {
   try {
     const idFolderu = rekord.drive?.folder || await folderAdresu(rekord);
     const wynik = await google.wyslijPlik({ plik: rekord.pdf, nazwa: rekord.nazwaPliku, idFolderu, idPliku: rekord.drive?.id });
-    rekord.drive = { id: wynik.id, link: wynik.webViewLink, folder: idFolderu };
+    rekord.drive = { id: wynik.id, link: wynik.webViewLink, folder: idFolderu, modifiedTime: wynik.modifiedTime };
     for (const z of rekord.zdjecia || []) {
       if (z.drive) continue;
       const plik = await odczytaj('zdjecia', kluczZdjecia(rekord, z));
@@ -440,7 +519,7 @@ async function wyslijRekord(rekord, ponowienie = false) {
     // Folder albo plik skasowany/przeniesiony na Dysku w międzyczasie -
     // zapominamy zapamiętane miejsce i wysyłamy wszystko od nowa (raz).
     if (ponowienie || !/404|not found/i.test(blad.message)) throw blad;
-    await usun('ustawienia', `folder|${rekord.inwestycja}|${rekord.typ}`);
+    await usun('ustawienia', kluczFolderu(rekord));
     rekord.drive = null;
     for (const z of rekord.zdjecia || []) z.drive = null;
     return wyslijRekord(rekord, true);
@@ -448,7 +527,8 @@ async function wyslijRekord(rekord, ponowienie = false) {
   // Tabela po plikach i poza blokiem wyżej: 404 z arkusza to nie skasowany folder.
   if (rekord.tabela && !rekord.tabela.wpisano) {
     await zapiszRekord(rekord);
-    await wpiszDoTabeli(rekord);
+    if (rekord.typ === 'wniosek') await wpiszWniosek(rekord);
+    else await wpiszDoTabeli(rekord);
     rekord.tabela.wpisano = true;
   }
   rekord.status = 'wyslany';
@@ -459,7 +539,7 @@ async function wyslijRekord(rekord, ponowienie = false) {
 // Odpowiedzi PV do każdego wiersza PV tego adresu, na świeżo pobranym arkuszu.
 async function wpiszDoTabeli(rekord) {
   const { tabela } = await odczytaj('inwestycje', rekord.inwestycja);
-  if (tabela.mimeType !== google.MIME.arkusz) throw new Error('tabela montażowa jest plikiem Excela – aplikacja wpisuje tylko do Arkuszy Google');
+  if (tabela.mimeType !== google.MIME.arkusz) throw new Error(TYLKO_ARKUSZ_GOOGLE);
   try {
     for (const cel of rekord.wiersze || []) {
       const wiersze = await google.wartosciArkusza(tabela.id, cel.arkusz);
@@ -508,6 +588,7 @@ function zamknijProtokol() {
   stan.protokol.dokument?.destroy();
   stan.protokol = null;
   renderujZdjecia();
+  document.body.classList.remove('tryb-wniosek', 'wniosek-zablokowany');
 }
 
 function pokazKontakt(a) {
@@ -529,7 +610,7 @@ async function ekranProtokol(idInwestycji, idAdresu, typ) {
   const a = stan.wynik.adresy.find(x => x.id === idAdresu);
   if (!a || !TYP[typ]) { location.hash = `i/${encodeURIComponent(idInwestycji)}`; return; }
   const klucz = kluczProtokolu(a, typ);
-  if (stan.protokol?.rekord.klucz === klucz) return;
+  if (stan.protokol?.rekord?.klucz === klucz) return;
   zamknijProtokol();
   pokazEkran('ekran-protokol', { tytul: a.adres, podtytul: `${TYP[typ].etykieta} · ${rozbijNazwe(stan.inwestycja.nazwa)[0]}` });
   pokazKontakt(a);
@@ -617,7 +698,7 @@ function zapiszSzkic(otwarty, kreski) {
 async function zapiszRekord(rekord) {
   try {
     await zapisz('audyty', rekord.klucz, rekord);
-    stan.audyty.set(rekord.klucz, { status: rekord.status, inwestycja: rekord.inwestycja });
+    stan.audyty.set(rekord.klucz, { status: rekord.status, inwestycja: rekord.inwestycja, typ: rekord.typ, zatwierdzono: rekord.zatwierdzono || null });
   } catch (blad) {
     console.error(blad);
     toast(`Nie udało się zapisać w pamięci tabletu: ${blad.message}`, { typ: 'blad', czas: 8000 });
@@ -688,7 +769,8 @@ let adresyMiniatur = [];
 function renderujZdjecia() {
   for (const u of adresyMiniatur) URL.revokeObjectURL(u);
   adresyMiniatur = [];
-  const otwarty = stan.protokol;
+  // Wnioski materiałowe są bez zdjęć.
+  const otwarty = stan.protokol?.rekord && stan.protokol.rekord.typ !== 'wniosek' ? stan.protokol : null;
   const zdjecia = otwarty?.rekord.zdjecia || [];
   $('licznik-zdjec').hidden = !zdjecia.length;
   $('licznik-zdjec').textContent = zdjecia.length;
@@ -724,7 +806,7 @@ async function usunZdjecie(z) {
   renderujZdjecia();
 }
 
-$('dodaj-zdjecia').addEventListener('click', () => { if (stan.protokol?.edytor) $('wybierz-zdjecia').click(); });
+$('dodaj-zdjecia').addEventListener('click', () => { if (stan.protokol?.edytor && stan.protokol.rekord.typ !== 'wniosek') $('wybierz-zdjecia').click(); });
 
 $('wybierz-zdjecia').addEventListener('change', async e => {
   const pliki = [...e.target.files];
@@ -842,6 +924,7 @@ const nazwaPliku = rekord => bezpiecznaNazwa(`${rekord.adres}_${SKROT_PLIKU[reko
 $('zapisz-protokol').addEventListener('click', async () => {
   const otwarty = stan.protokol;
   if (!otwarty?.edytor) return;
+  if (otwarty.rekord.typ === 'wniosek') { await zapiszWniosek(otwarty); return; }
   if (otwarty.rekord.typ === 'pv_me') {
     const odpowiedzi = await zapytajOTabele(otwarty);
     if (odpowiedzi === null || stan.protokol !== otwarty) return;
@@ -896,6 +979,450 @@ $('zapisz-protokol').addEventListener('click', async () => {
   }
 });
 
+// --- Wniosek materiałowy ---
+//
+// Szef magazynu wybiera rodzaj instalacji (PV / PC) i adres, wypełnia wzór
+// rysikiem - także ilości w polach "____" (odczytuje je Claude przy
+// zatwierdzeniu albo wysyłce, src/odczyt-pisma.js); z klawiatury tylko pola
+// tekstowe nagłówka. Zapis: PDF do
+// <inwestycja> / MATERIAŁÓWKI / <PV|PC> / <adres>, pozycje i status do
+// „Tabeli materiałowej” inwestycji. Zatwierdzenie kończy edycję.
+
+const nazwaPlikuWniosku = (adres, typ) => bezpiecznaNazwa(`${adres}_wniosek materiałowy ${rodzajWniosku(typ)}`) + '.pdf';
+const dataDzisiaj = () => dataCzytelna(new Date().toISOString()).slice(0, 10);
+const ROZMIAR_WPISU = 10;
+
+// Wzór zapamiętany z wersją: biuro może podmienić plik wzoru, a rozpoczęty
+// wniosek ma zostać na tym, na którym go zaczęto.
+async function wersjaWzoru(wzor) {
+  const klucz = `${wzor.id}@${wzor.modifiedTime}`;
+  if (await odczytaj('szablony', klucz)) return klucz;
+  let szablon = await odczytaj('szablony', wzor.id);
+  if (szablon?.modifiedTime !== wzor.modifiedTime) {
+    if (!navigator.onLine) return szablon ? wzor.id : null;
+    szablon = { nazwa: wzor.nazwa, modifiedTime: wzor.modifiedTime, bajty: await google.pobierzPlik(wzor) };
+    await zapisz('szablony', wzor.id, szablon);
+  }
+  await zapisz('szablony', klucz, szablon);
+  return klucz;
+}
+
+// Wniosek tego adresu na Dysku - bez zakładania folderów.
+async function znajdzWniosekNaDysku(a, typ) {
+  let idTypu = await odczytaj('ustawienia', kluczFolderu({ typ: 'wniosek', inwestycja: stan.inwestycja.id, instalacja: typ }));
+  if (!idTypu) {
+    const idMat = await google.znajdzFolder(stan.inwestycja.id, takaSama(DYSK.materialowki));
+    idTypu = idMat && await google.znajdzFolder(idMat, takaSama(rodzajWniosku(typ)));
+  }
+  const idAdresu = idTypu && await google.znajdzFolder(idTypu, takaSama(bezpiecznaNazwa(a.adres)));
+  if (!idAdresu) return null;
+  return (await google.plikiPdf(idAdresu)).find(p => takaSama(nazwaPlikuWniosku(a.adres, typ))(p.name)) || null;
+}
+
+// Wersja z Dysku, gdy w tablecie jej nie ma albo na Dysku jest nowsza (wniosek
+// poprawiany na innym urządzeniu). Niewysłane zmiany z tabletu mają pierwszeństwo.
+async function wniosekZDysku(rekord, a, klucz, typ) {
+  if (rekord && rekord.status !== 'wyslany') return null;
+  let plik = rekord?.drive?.id ? await google.metadanePliku(rekord.drive.id) : null;
+  plik ||= await znajdzWniosekNaDysku(a, typ);
+  if (!plik || plik.modifiedTime === rekord?.drive?.modifiedTime) return null;
+  const bajty = await google.pobierzPlik({ id: plik.id, mimeType: google.MIME.pdf });
+  const dokument = await pdfjs.getDocument({ data: new Uint8Array(bajty) }).promise;
+  let odczyt;
+  try { odczyt = await stanZPdf(dokument); } finally { dokument.destroy(); }
+  if (!odczyt) return null; // PDF wrzucony ręcznie, nie z aplikacji
+  const s = odczyt.stan;
+  const kluczWzoru = s.wzor?.klucz || `wniosek|${plik.id}`;
+  if (!await odczytaj('szablony', kluczWzoru)) {
+    await zapisz('szablony', kluczWzoru, { nazwa: s.wzor?.nazwa || 'Wzór wniosku', modifiedTime: s.wzor?.modifiedTime || null, bajty: odczyt.wzor.slice().buffer });
+  }
+  const zDysku = {
+    klucz,
+    inwestycja: stan.inwestycja.id,
+    adresId: a.id,
+    adres: a.adres,
+    typ: 'wniosek',
+    instalacja: typ,
+    wzor: kluczWzoru,
+    wartosci: s.wartosci || {},
+    kreski: s.kreski || null,
+    pola: s.pola || null,
+    rozmiaryStron: s.rozmiaryStron || null,
+    odczyt: s.odczyt || null,
+    utworzono: s.rozpoczeto,
+    rozpoczeto: s.rozpoczeto,
+    zmieniono: s.zmieniono,
+    zatwierdzono: s.zatwierdzono || null,
+    status: 'wyslany',
+    nazwaPliku: plik.name,
+    drive: { id: plik.id, link: plik.webViewLink, folder: plik.parents?.[0], modifiedTime: plik.modifiedTime }
+  };
+  await zapiszRekord(zDysku);
+  return zDysku;
+}
+
+// Biuro może odblokować zatwierdzony wniosek, czyszcząc "Zatwierdzono"
+// w arkuszu Wnioski tabeli materiałowej.
+async function odblokowanyWArkuszu(rekord) {
+  let wiersze;
+  try {
+    wiersze = await tabelaMat.odczytajWnioski(google, await tabelaMat.tabelaMaterialowa(google, rekord.inwestycja, { utworz: false }));
+  } catch { return false; }
+  const wpis = tabelaMat.statusyWnioskow(wiersze).get(tabelaMat.kluczWniosku(rekord.adres, rodzajWniosku(rekord.instalacja)));
+  return Boolean(wpis && !wpis.zatwierdzony);
+}
+
+async function ekranWniosek(idInwestycji, idAdresu, typ) {
+  await zaladujInwestycje(idInwestycji);
+  const a = stan.wynik.adresy.find(x => x.id === idAdresu);
+  if (!a || !TYP[typ]) { location.hash = `i/${encodeURIComponent(idInwestycji)}`; return; }
+  const klucz = kluczWniosku(stan.inwestycja.id, a.id, typ);
+  if (stan.protokol?.klucz === klucz) return;
+  zamknijProtokol();
+  const [nazwaInwestycji] = rozbijNazwe(stan.inwestycja.nazwa);
+  pokazEkran('ekran-protokol', { tytul: a.adres, podtytul: `Wniosek materiałowy ${rodzajWniosku(typ)} · ${nazwaInwestycji}` });
+  document.body.classList.add('tryb-wniosek');
+  pokazKontakt(a);
+  $('strony').replaceChildren(el('div', { class: 'strona szkielet', style: 'aspect-ratio: 595 / 842' }));
+  pokazUwage('komunikat', '');
+  $('zapisz-protokol').disabled = true;
+
+  const otwarty = { klucz, rekord: null };
+  stan.protokol = otwarty;
+  let rekord = await odczytaj('audyty', klucz);
+  let uwaga = '';
+  if (navigator.onLine) {
+    try {
+      rekord = await wniosekZDysku(rekord, a, klucz, typ) || rekord;
+      if (rekord?.zatwierdzono && rekord.status === 'wyslany' && await odblokowanyWArkuszu(rekord)) {
+        rekord.zatwierdzono = null;
+        await zapiszRekord(rekord);
+        uwaga = 'Biuro wyczyściło datę zatwierdzenia w tabeli – wniosek znów można poprawiać.';
+      }
+    } catch (blad) {
+      console.warn(blad);
+      uwaga = `Nie udało się sprawdzić wersji na Dysku (${blad.message}). Pokazuję wersję z tabletu.`;
+    }
+  }
+  if (stan.protokol !== otwarty) return;
+
+  let kluczWzoru = rekord?.wzor;
+  let szablon = kluczWzoru && await odczytaj('szablony', kluczWzoru);
+  const wzor = wzorWniosku(stan.inwestycja.wzory, typ);
+  if (!szablon) {
+    kluczWzoru = wzor && await wersjaWzoru(wzor);
+    szablon = kluczWzoru && await odczytaj('szablony', kluczWzoru);
+  }
+  if (stan.protokol !== otwarty) return;
+  if (!szablon) {
+    $('strony').replaceChildren();
+    pokazUwage('komunikat', wzor
+      ? 'Wzoru wniosku nie ma w pamięci tabletu, a nie ma internetu.'
+      : `Brak wzoru wniosku materiałowego dla: ${TYP[typ].etykieta}. Poproś biuro o wrzucenie go do folderu „Wzory audytów” tej inwestycji (plik ze słowem „wniosek” i „${rodzajWniosku(typ)}” w nazwie).`);
+    return;
+  }
+
+  rekord ||= {
+    klucz,
+    inwestycja: stan.inwestycja.id,
+    adresId: a.id,
+    adres: a.adres,
+    typ: 'wniosek',
+    instalacja: typ,
+    wartosci: null,
+    kreski: null,
+    status: null,
+    utworzono: new Date().toISOString()
+  };
+  rekord.wzor = kluczWzoru;
+  otwarty.rekord = rekord;
+  otwarty.szablon = szablon;
+  otwarty.dokument = await pdfjs.getDocument({ data: new Uint8Array(szablon.bajty.slice(0)) }).promise;
+  otwarty.strony = await tekstSzablonu(otwarty.dokument);
+  otwarty.pola = polaWzoru(otwarty.strony);
+  rekord.wartosci ||= wartosciPoczatkowe(otwarty.pola, { adres: a.adres, nazwisko: a.nazwisko, inwestycja: nazwaInwestycji, data: dataDzisiaj() });
+  if (stan.protokol !== otwarty) return;
+  otwarty.edytor = await utworzEdytor($('strony'), {
+    dokument: otwarty.dokument,
+    wpisy: [],
+    kreski: rekord.kreski,
+    onZmiana: kreski => zapiszSzkic(otwarty, kreski)
+  });
+  if (stan.protokol !== otwarty) return;
+  polaNaStronach(otwarty);
+  ustawPrzyciski();
+  $('zapisz-protokol').disabled = false;
+  $('zatwierdz-wniosek').disabled = false;
+  ustawBlokade(otwarty);
+  if (!otwarty.pola.length) uwaga ||= 'We wzorze nie ma pól do wpisania („____”) – wszystko wypełnia się rysikiem.';
+  if (!rekord.zatwierdzono && uwaga) pokazUwage('komunikat', uwaga, { neutralna: true });
+}
+
+// Pola "____" jako pola tekstowe na stronach. Pozycje w punktach PDF
+// przeliczone na procenty strony - zgadzają się przy każdym rozmiarze ekranu.
+function polaNaStronach(otwarty) {
+  const strony = otwarty.edytor.strony;
+  const wejscia = [];
+  for (const p of otwarty.pola) {
+    const s = strony[p.strona];
+    if (!s) continue;
+    const proc = (v, z) => `${(v / z * 100).toFixed(3)}%`;
+    // Ilość pisze się rysikiem - tylko lekkie podświetlenie miejsca.
+    if (p.rodzaj === 'ilosc') {
+      s.div.append(el('div', { class: 'miejsce-ilosci', style: `left:${proc(p.x, s.szer)};width:${proc(p.w, s.szer)};top:${proc(s.wys - p.y - 14, s.wys)};height:${proc(19, s.wys)}` }));
+      continue;
+    }
+    const wejscie = el('input', {
+      class: 'pole-wniosku',
+      type: 'text',
+      inputmode: 'text',
+      enterkeyhint: 'next',
+      autocomplete: 'off',
+      spellcheck: 'false',
+      'aria-label': p.kolumna,
+      title: p.kolumna,
+      style: `left:${proc(p.x, s.szer)};width:${proc(p.w, s.szer)};top:${proc(s.wys - p.y - 12.5, s.wys)};height:${proc(16, s.wys)};font-size:${(ROZMIAR_WPISU / s.szer * 100).toFixed(3)}cqw`,
+      oninput: e => {
+        otwarty.rekord.wartosci[p.id] = e.target.value;
+        zapiszSzkic(otwarty, otwarty.edytor.kreski);
+      },
+      // Enter przechodzi do następnej pozycji - szybkie wpisywanie listy.
+      onkeydown: e => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        const nastepne = wejscia[wejscia.indexOf(e.target) + 1];
+        if (nastepne) nastepne.focus(); else e.target.blur();
+      }
+    });
+    wejscie.value = otwarty.rekord.wartosci[p.id] ?? '';
+    s.div.append(wejscie);
+    wejscia.push(wejscie);
+  }
+  otwarty.wejscia = wejscia;
+}
+
+function ustawBlokade(otwarty) {
+  const zablokowany = Boolean(otwarty.rekord.zatwierdzono);
+  otwarty.edytor.ustawTylkoOdczyt(zablokowany);
+  for (const w of otwarty.wejscia || []) w.readOnly = zablokowany;
+  document.body.classList.toggle('wniosek-zablokowany', zablokowany);
+  $('zapisz-protokol').hidden = zablokowany;
+  $('zatwierdz-wniosek').hidden = zablokowany;
+  if (zablokowany) {
+    pokazUwage('komunikat', `Wniosek zatwierdzony ${dataCzytelna(otwarty.rekord.zatwierdzono)} – tylko do podglądu.`, { neutralna: true, znak: 'klodka' });
+  }
+}
+
+const wartoscPola = (otwarty, p) => String(otwarty.rekord.wartosci[p.id] ?? '').trim();
+
+function tekstyWniosku(otwarty, zatwierdzono) {
+  // Ilości są w PDF pismem z rysika - bez dopisywania odczytu.
+  const teksty = otwarty.pola.filter(p => p.rodzaj !== 'ilosc' && wartoscPola(otwarty, p)).map(p => ({
+    strona: p.strona, x: p.x + 2, y: p.y + 2, tekst: wartoscPola(otwarty, p), rozmiar: ROZMIAR_WPISU, maxSzer: Math.max(p.w - 4, 12)
+  }));
+  // Pieczątka w prawym górnym rogu pierwszej strony - widać ją w podglądzie Dysku.
+  const pierwsza = otwarty.strony[0];
+  if (zatwierdzono && pierwsza) {
+    teksty.push({ strona: 0, x: pierwsza.szer - 200, y: pierwsza.wys - 24, tekst: `ZATWIERDZONO ${dataCzytelna(zatwierdzono)}`, rozmiar: 9, kolor: '#1b7f3b' });
+  }
+  return teksty;
+}
+
+// Pola i rozmiary stron zapisywane w rekordzie (i w PDF) - z nich odczyt
+// pisma działa także po wczytaniu wniosku na innym urządzeniu.
+const polaRekordu = otwarty => otwarty.pola.map(({ id, kolumna, etykieta, jednostka, sekcja, rodzaj, strona, x, y, w }) => ({ id, kolumna, etykieta, jednostka, sekcja, rodzaj, strona, x, y, w }));
+const rozmiaryStron = otwarty => otwarty.strony.map(s => ({ szer: s.szer, wys: s.wys }));
+
+async function potwierdzZatwierdzenie(otwarty) {
+  const rekord = otwarty.rekord;
+  const opis = $('dialog-zatwierdz-opis');
+  const pozycje = otwarty.pola.filter(p => p.rodzaj === 'ilosc');
+  opis.replaceChildren();
+  if (pozycje.length && navigator.onLine) {
+    // Odczyt na świeżym piśmie - szef widzi, co trafi do tabeli, zanim zatwierdzi.
+    const kopia = { ...rekord, pola: polaRekordu(otwarty), rozmiaryStron: rozmiaryStron(otwarty), kreski: otwarty.edytor.kreski };
+    const trwa = toast('Odczytuję ilości…', { czas: 0 });
+    try {
+      const odczyt = await odczytajPismo(kopia);
+      rekord.odczyt = odczyt;
+      const odczytane = pozycje.filter(p => p.id in odczyt.wartosci);
+      wstaw(opis, [
+        el('p', {}, odczytane.length ? `Odczytane ilości (${odczytane.length} z ${pozycje.length} pozycji) – porównaj z tym, co napisałeś:` : 'Nie wpisano żadnej ilości.'),
+        odczytane.length > 0 && el('ul', { class: 'odczyty' }, odczytane.map(p => el('li', { class: odczyt.niepewne.includes(p.id) ? 'niepewny' : '' },
+          el('span', {}, p.etykieta), el('strong', {}, `${odczyt.wartosci[p.id] || '?'}${p.jednostka ? ` ${p.jednostka}` : ''}${odczyt.niepewne.includes(p.id) ? ' – do sprawdzenia' : ''}`))))
+      ]);
+    } catch (blad) {
+      console.warn(blad);
+      wstaw(opis, [el('p', { class: 'uwaga-odczytu' }, `Nie udało się teraz odczytać ilości (${blad.message}). Odczytają się przy wysyłce.`)]);
+    } finally {
+      trwa.remove();
+    }
+  } else if (pozycje.length) {
+    wstaw(opis, [el('p', { class: 'uwaga-odczytu' }, 'Brak internetu – ilości odczytają się przy wysyłce.')]);
+  }
+  if (stan.protokol !== otwarty) return false;
+  const okno = $('dialog-zatwierdz');
+  okno.returnValue = '';
+  okno.showModal();
+  return new Promise(ok => okno.addEventListener('close', () => ok(okno.returnValue === 'ok'), { once: true }));
+}
+
+async function zapiszWniosek(otwarty, { zatwierdz = false } = {}) {
+  const rekord = otwarty.rekord;
+  if (!otwarty.edytor || rekord.zatwierdzono) return;
+  if (zatwierdz && (!await potwierdzZatwierdzenie(otwarty) || stan.protokol !== otwarty)) return;
+  document.activeElement?.blur?.();
+  const przyciski = [$('zapisz-protokol'), $('zatwierdz-wniosek')];
+  for (const p of przyciski) p.disabled = true;
+  const trwa = toast(zatwierdz ? 'Zatwierdzam wniosek…' : 'Zapisuję wniosek…', { czas: 0 });
+  const nastepny = { etykieta: 'Następny adres', onclick: () => history.back() };
+  try {
+    const teraz = new Date().toISOString();
+    const zatwierdzono = zatwierdz ? teraz : null;
+    const rozpoczeto = rekord.rozpoczeto || rekord.utworzono || teraz;
+    const kreski = otwarty.edytor.kreski;
+    const pola = polaRekordu(otwarty);
+    const strony = rozmiaryStron(otwarty);
+    const nazwa = nazwaPlikuWniosku(rekord.adres, rekord.instalacja);
+    const stanDoEdycji = {
+      typ: 'wniosek',
+      instalacja: rekord.instalacja,
+      adres: rekord.adres,
+      wzor: { klucz: rekord.wzor, nazwa: otwarty.szablon.nazwa, modifiedTime: otwarty.szablon.modifiedTime || null },
+      wartosci: rekord.wartosci,
+      kreski,
+      pola,
+      rozmiaryStron: strony,
+      odczyt: rekord.odczyt || null,
+      rozpoczeto,
+      zmieniono: teraz,
+      zatwierdzono
+    };
+    const bajty = await zbudujPdf({
+      szablon: otwarty.szablon.bajty.slice(0),
+      czcionka: await (await fetch('vendor/DejaVuSansCondensed.ttf')).arrayBuffer(),
+      fontkit: window.fontkit,
+      teksty: tekstyWniosku(otwarty, zatwierdzono),
+      kreski,
+      tytul: nazwa.replace(/\.pdf$/, ''),
+      zalaczniki: zalacznikiStanu(stanDoEdycji, otwarty.szablon.bajty)
+    });
+    Object.assign(rekord, {
+      kreski, pola, rozmiaryStron: strony, rozpoczeto, zmieniono: teraz, zatwierdzono, nazwaPliku: nazwa,
+      pdf: new Blob([bajty], { type: 'application/pdf' }),
+      status: 'zapisany', zapisano: teraz, tabela: { wpisano: false }
+    });
+    clearTimeout(czasAutozapisu);
+    await zapiszRekord(rekord);
+    if (zatwierdzono && stan.protokol === otwarty) ustawBlokade(otwarty);
+
+    if (!navigator.onLine) {
+      trwa.remove();
+      toast('Zapisano w tablecie. Wyślesz z listy adresów, gdy będzie internet.', { typ: 'ok', akcja: nastepny, czas: 8000 });
+      return;
+    }
+    try {
+      await wyslijRekord(rekord);
+      trwa.remove();
+      toast(`${zatwierdzono ? 'Zatwierdzono' : 'Zapisano'} na Dysku i w tabeli: ${nazwa}`, { typ: 'ok', akcja: nastepny, czas: 8000 });
+    } catch (blad) {
+      console.error(blad);
+      trwa.remove();
+      toast(`Zapisano w tablecie, ale wysyłka się nie udała (${blad.message}). Wyślesz z listy adresów.`, { typ: 'blad', akcja: nastepny, czas: 10000 });
+    }
+  } catch (blad) {
+    console.error(blad);
+    trwa.remove();
+    toast(`Nie udało się zapisać wniosku: ${blad.message}`, { typ: 'blad', czas: 10000 });
+  } finally {
+    for (const p of przyciski) p.disabled = false;
+  }
+}
+
+$('zatwierdz-wniosek').addEventListener('click', () => {
+  const otwarty = stan.protokol;
+  if (otwarty?.rekord?.typ === 'wniosek') zapiszWniosek(otwarty, { zatwierdz: true });
+});
+
+// --- Odczyt ilości pisanych rysikiem ---
+
+// Klucz do usługi odczytu (Claude) - wpisywany raz na tablecie.
+async function kluczOdczytu({ pytaj = false } = {}) {
+  const zapisany = await odczytaj('ustawienia', 'kluczOdczytu');
+  if (zapisany && !pytaj) return zapisany;
+  const okno = $('dialog-klucz');
+  $('klucz-odczytu').value = zapisany || '';
+  okno.returnValue = '';
+  okno.showModal();
+  await new Promise(ok => okno.addEventListener('close', ok, { once: true }));
+  const klucz = $('klucz-odczytu').value.trim();
+  if (okno.returnValue !== 'ok' || !klucz) throw new Error('brak klucza do odczytu pisma');
+  await zapisz('ustawienia', 'kluczOdczytu', klucz);
+  return klucz;
+}
+
+// Odczyt ilości z pisma w polach - powtarzany tylko, gdy pismo się zmieniło.
+// Wynik w rekord.odczyt: { podpis, wartosci: { idPola: tekst }, niepewne: [idPola] }.
+async function odczytajPismo(rekord) {
+  const pola = rekord.pola || [];
+  const wysokosci = (rekord.rozmiaryStron || []).map(s => s.wys);
+  const przypisane = przypiszKreski(pola, rekord.kreski, wysokosci);
+  const podpis = podpisPisma(przypisane);
+  if (rekord.odczyt?.podpis === podpis) return rekord.odczyt;
+  const zPismem = pola.filter(p => p.rodzaj === 'ilosc' && przypisane.has(p.id));
+  const doOdczytu = await Promise.all(zPismem.map(async (p, i) => ({
+    nr: i + 1, etykieta: p.etykieta || p.kolumna, jednostka: p.jednostka, obraz: await wycinekPola(p, przypisane.get(p.id), wysokosci[p.strona])
+  })));
+  let wyniki = new Map();
+  if (doOdczytu.length) {
+    for (let proba = 0; ; proba += 1) {
+      const klucz = await kluczOdczytu({ pytaj: proba > 0 });
+      try {
+        wyniki = await odczytajIlosci({ klucz, pola: doOdczytu });
+        break;
+      } catch (blad) {
+        if (proba === 0 && await zlyKlucz(blad)) continue; // zły klucz - zapytaj raz jeszcze
+        throw new Error(`odczyt pisma: ${blad.message}`);
+      }
+    }
+  }
+  const wartosci = {};
+  const niepewne = [];
+  zPismem.forEach((p, i) => {
+    const w = wyniki.get(i + 1);
+    wartosci[p.id] = w?.odczyt || '';
+    if (!w?.odczyt || w.pewnosc !== 'wysoka') niepewne.push(p.id);
+  });
+  rekord.odczyt = { podpis, wartosci, niepewne };
+  return rekord.odczyt;
+}
+
+// Tabela materiałowa inwestycji (zakładana przy pierwszym wniosku): pozycje
+// wniosku zastępują poprzednie pozycje tego wniosku, w arkuszu Wnioski
+// status i daty.
+async function wpiszWniosek(rekord) {
+  const rodzaj = rodzajWniosku(rekord.instalacja);
+  const odczyt = await odczytajPismo(rekord);
+  await zapiszRekord(rekord);
+  // Ilości tylko z odczytu pisma; pola nagłówka z klawiatury.
+  const naglowek = Object.fromEntries(Object.entries(rekord.wartosci || {}).filter(([id]) => (rekord.pola || []).find(p => p.id === id)?.rodzaj !== 'ilosc'));
+  try {
+    const id = await tabelaMat.tabelaMaterialowa(google, rekord.inwestycja);
+    await tabelaMat.zapiszPozycje(google, id, {
+      nowe: pozycjeWniosku({ pola: rekord.pola || [], wartosci: { ...naglowek, ...odczyt.wartosci }, niepewne: odczyt.niepewne, adres: rekord.adres, rodzaj, link: rekord.drive?.link, zapisano: rekord.zmieniono }),
+      czyStary: w => w['Źródło'] === tabelaMat.ZRODLO.wniosek && tabelaMat.kluczWniosku(w.Adres, w.Rodzaj) === tabelaMat.kluczWniosku(rekord.adres, rodzaj)
+    });
+    await tabelaMat.zapiszWniosek(google, id, { adres: rekord.adres, rodzaj, rozpoczeto: rekord.rozpoczeto, zmieniono: rekord.zmieniono, zatwierdzono: rekord.zatwierdzono, link: rekord.drive?.link });
+  } catch (blad) {
+    if (blad.status === 403) throw new Error('to konto nie może edytować tabeli materiałowej – biuro musi dać uprawnienia „Edytujący” do folderu inwestycji');
+    throw blad;
+  }
+  if (stan.inwestycja?.id === rekord.inwestycja) {
+    stan.statusyWnioskow.set(tabelaMat.kluczWniosku(rekord.adres, rodzaj), { zatwierdzony: Boolean(rekord.zatwierdzono), zatwierdzono: dataCzytelna(rekord.zatwierdzono) });
+  }
+}
+
+
 // --- Start ---
 
 function pokazSiec() {
@@ -911,7 +1438,8 @@ async function start() {
   try {
     stan.inwestycje = await odczytaj('ustawienia', 'inwestycje') || [];
     stan.ostatnie = await odczytaj('ustawienia', 'ostatnie') || [];
-    for (const r of await wszystkie('audyty')) if (r.inwestycja) stan.audyty.set(r.klucz, { status: r.status, inwestycja: r.inwestycja });
+    stan.tryb = await odczytaj('ustawienia', 'tryb') || 'audyty';
+    for (const r of await wszystkie('audyty')) if (r.inwestycja) stan.audyty.set(r.klucz, { status: r.status, inwestycja: r.inwestycja, typ: r.typ, zatwierdzono: r.zatwierdzono || null });
   } catch (blad) {
     console.warn('Nie odczytano danych z pamięci tabletu', blad);
   }

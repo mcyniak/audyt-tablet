@@ -27,7 +27,11 @@ npm test         # testy rozpoznawania arkuszy, także na prawdziwych tabelach z
 - `public/src/edytor.js` – strony szablonu + warstwa pisma (rysik pisze, palec przewija).
 - `public/src/atrament.js` – kształt kreski (wspólny dla ekranu i PDF).
 - `public/src/eksport.js` – gotowy PDF: szablon + wpisy + pismo jako wektory.
-- `public/app.js` – ekrany: tabela → lista adresów → adres → protokół.
+- `public/src/wniosek.js` – wniosek materiałowy: pola i sekcje ze wzoru, pozycje do tabeli, stan do edycji w PDF.
+- `public/src/odczyt-pisma.js` – ilości pisane rysikiem: przypisanie kresek do pól, wycinki, odczyt przez Claude.
+- `public/src/tabela-materialowa.js` – „Tabela materiałowa” inwestycji (Pozycje / Wnioski / Razem).
+  **Ten sam plik jest w repozytorium listy-materialowe** – zmieniać w obu.
+- `public/app.js` – ekrany: tabela → lista adresów → adres → protokół / wniosek.
 - `public/sw.js` – tryb offline. Przy wydaniu zmień `WERSJA`.
 - `scripts/probny-protokol.js` – wypełnia szablon przykładowymi danymi (sprawdzenie auto-wpisów).
 
@@ -51,10 +55,16 @@ wzór w `test/lokalne.przyklad.json`) i pomijają się, gdy go nie ma.
 INWESTYCJE_3/
 ├── <INWESTYCJA>/                     ← inwestycja = folder z tabelą montażową
 │   ├── <…> tab. montażowa <…>         (arkusz Google albo .xlsx, nazwa zawiera „montaż”)
+│   ├── Tabela materiałowa             ← wnioski + listy materiałowe (zakładana sama)
+│   ├── MATERIAŁÓWKI/                  ← PDF-y wniosków (foldery zakładane same)
+│   │   ├── PV/<adres>/<adres>_wniosek materiałowy PV.pdf
+│   │   └── PC/<adres>/<adres>_wniosek materiałowy PC.pdf
 │   └── Wzory audytów/                 (PDF lub dokument Google na typ audytu;
 │       ├── PC powietrzne.pdf           typ rozpoznawany z nazwy: PC/pompa, grunt/powietrz,
 │       ├── PC gruntowe.pdf             PV/fotowolt, KOLEKTORY/solar, KOTŁY)
-│       └── PV.pdf
+│       ├── PV.pdf
+│       ├── Wniosek materiałowy PV.pdf  („wniosek” w nazwie = wzór wniosku, nie audytu;
+│       └── Wniosek materiałowy PC.pdf   rodzaj instalacji z nazwy jak wyżej)
 └── AUDYTY/                           ← gotowe protokoły (foldery zakładane same)
     └── <INWESTYCJA>/
         ├── PC/
@@ -94,6 +104,50 @@ magazynu energii nie ma na wzorze - o nie okno pyta przyciskami.
 - Zmieniane są tylko komórki z inną odpowiedzią, pisownią używaną już w tej
   kolumnie („mieszkalny” / „Dach budynku mieszkalnego”, true/false w polach wyboru).
 - Tylko Arkusze Google (nie .xlsx); konto audytora musi mieć prawo edycji tabeli.
+
+## Wnioski materiałowe
+
+Na liście adresów przełącznik „Audyty / Wnioski materiałowe” (widoczny, gdy w
+folderze wzorów inwestycji jest wzór z „wniosek” w nazwie). Wniosek wypełnia
+szef magazynu: inwestycja → rodzaj instalacji (PV / PC – segmenty nad listą,
+bez „Wszystkie”) → adres. Pod jednym adresem PV i PC to dwa osobne wnioski.
+
+- **Wzór dla rodzaju:** „Wniosek materiałowy PV.pdf”, „Wniosek materiałowy PC.pdf”;
+  wzór bez rodzaju w nazwie służy wszystkim rodzajom, które nie mają własnego.
+- **Pola wzoru nie są zapisane w aplikacji.** Każdy ciąg podkreśleń `____` we
+  wzorze to pole; nazwą pola jest tekst przed nim w tym samym wierszu (bez Lp.),
+  jednostka (`szt.`, `m`, `kpl.`…) trafia w nawias. Linia wielkimi literami bez
+  pól („KONSTRUKCJA”) to sekcja pozycji pod nią. Pola z dwukropkiem („Ekipa:”)
+  → tekst z klawiatury; Inwestycja/Adres/Data/nazwisko wpisują się same.
+  Reszta wzoru (kropki `.....`, uwagi, podpis) – rysikiem.
+- **Ilości pisane rysikiem** (lekko podświetlone pola pozycji). Przy
+  zatwierdzeniu (z internetem) i przy wysyłce aplikacja wycina pismo z każdego
+  pola (sam atrament, `src/odczyt-pisma.js`) i odczytuje je jednym zapytaniem
+  Claude Haiku 5.5 (effort low, ~0,01 zł za wniosek). Okno zatwierdzenia
+  pokazuje odczytane ilości; niepewne mają w tabeli „Do sprawdzenia: tak”.
+  Odczyt powtarza się tylko po zmianie pisma. Klucz API wpisuje się raz na
+  tablecie (okno pojawia się samo przy pierwszym odczycie; zły klucz – pyta
+  ponownie). W PDF ilości zostają pismem. Przykłady: `wzory/Wniosek materiałowy PV - przykład.docx`
+  i `… PC - przykład.docx`.
+- **PDF** do `<inwestycja>/MATERIAŁÓWKI/<PV|PC>/<adres>/`.
+- **„Tabela materiałowa”** (Arkusz Google w folderze inwestycji, zakładany przy
+  pierwszym zapisie; ten sam zapisuje aplikacja Listy materiałowe):
+  - *Pozycje* – wiersz na wpisaną ilość: Adres, Rodzaj, Źródło, Sekcja, Pozycja,
+    Jedn., Ilość, …, Data, Ekipa, Do sprawdzenia, Plik (link do PDF), Zapisano. Poprawiony
+    wniosek zastępuje swoje poprzednie wiersze (nowe dopisywane, stare usuwane).
+    Inne pola tekstowe wzoru („Kierowca:”) dostają własną kolumnę na końcu.
+  - *Wnioski* – Adres, Rodzaj, Status, Rozpoczęto, Ostatnia zmiana, Zatwierdzono, PDF.
+  - *Razem* – formuła QUERY: suma każdej pozycji wg źródła i rodzaju.
+  Kolumny szukane po nagłówku – kolumn dopisanych przez biuro aplikacja nie rusza.
+- **Edycja z każdego urządzenia.** PDF ma w środku załączniki
+  `wniosek-stan.json` (wartości, kreski) i `wniosek-wzor.pdf` (czysty wzór).
+  Gdy na Dysku jest nowsza wersja niż w tablecie (albo w tablecie nie ma
+  żadnej), aplikacja wczytuje ją z PDF; niewysłane zmiany z tabletu mają
+  pierwszeństwo. Zapis podmienia ten sam plik.
+- **Zatwierdzenie** kończy edycję: pieczątka „ZATWIERDZONO <data>” na
+  1. stronie, status i data w arkuszu Wnioski, w aplikacji tylko podgląd. Biuro
+  może odblokować wniosek, czyszcząc komórkę „Zatwierdzono”.
+- Bez zdjęć.
 
 ## Etapy
 

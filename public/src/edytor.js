@@ -48,6 +48,7 @@ export async function utworzEdytor(kontener, { dokument, wpisy, kreski, onZmiana
     kolor: KOLORY.niebieski,
     rozmiar: 1.6,
     trybPalca: false,
+    tylkoOdczyt: false, // zatwierdzony wniosek - tylko podgląd
     wpisy,
     kreski: Array.from({ length: dokument.numPages }, (_, i) => kreski?.[i] ? [...kreski[i]] : []),
     historia: [],
@@ -173,6 +174,7 @@ export async function utworzEdytor(kontener, { dokument, wpisy, kreski, onZmiana
     const warstwa = s.zywa;
 
     warstwa.addEventListener('pointerdown', e => {
+      if (stan.tylkoOdczyt) return;
       if (e.pointerType === 'touch' && !stan.trybPalca) return; // palec przewija
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       e.preventDefault();
@@ -228,6 +230,12 @@ export async function utworzEdytor(kontener, { dokument, wpisy, kreski, onZmiana
       stan.trybPalca = wlaczony;
       kontener.classList.toggle('pisz-palcem', wlaczony);
     },
+    ustawTylkoOdczyt(wlaczony) {
+      stan.tylkoOdczyt = wlaczony;
+      kontener.classList.toggle('tylko-odczyt', wlaczony);
+    },
+    // Warstwy stron - nad nimi aplikacja kładzie pola wniosku.
+    get strony() { return strony.map(s => ({ div: s.div, szer: s.szer, wys: s.wys })); },
     ustawWpisy(wpisy) {
       stan.wpisy = wpisy;
       strony.forEach(rysujAtrament);

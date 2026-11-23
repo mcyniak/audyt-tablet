@@ -624,6 +624,53 @@ a.chip .ik { color: var(--marka); }
   box-shadow: 0 1px 2px rgba(16, 24, 40, .08), 0 8px 24px -8px rgba(16, 24, 40, .18);
 }
 
+/* Pola wniosku leżą na stronie w jednostkach jej szerokości (cqw) - rosną
+   i maleją razem ze stroną przy obrocie tabletu. */
+.strona { container-type: inline-size; }
+.pole-wniosku {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 .3em;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(26, 61, 143, .07);
+  color: #1a3d8f;
+  font-family: "AudytDejaVu", sans-serif;
+  line-height: 1;
+  outline: none;
+}
+.pole-wniosku:focus { background: rgba(26, 61, 143, .13); box-shadow: 0 0 0 2px var(--info); }
+.pole-wniosku:read-only { background: transparent; }
+
+body.tryb-wniosek #zdjecia,
+body.tryb-wniosek #dodaj-zdjecia,
+body.tryb-wniosek #edytuj-dane { display: none; }
+body.wniosek-zablokowany .narzedzia { display: none; }
+body.wniosek-zablokowany main { padding-bottom: 40px; }
+#zatwierdz-wniosek { min-height: 44px; padding: 0 16px; margin-right: 8px; }
+.segmenty.tryb { margin-top: 14px; }
+.podsumowanie-wniosku { margin: 0 0 16px; font-weight: 600; }
+.podsumowanie-wniosku:empty { display: none; }
+.podsumowanie-wniosku p { margin: 0 0 8px; }
+.podsumowanie-wniosku .uwaga-odczytu { font-weight: 400; color: var(--tekst-2, #555); }
+.odczyty { list-style: none; margin: 0; padding: 0; max-height: 40vh; overflow: auto; font-weight: 400; border-top: 1px solid rgba(0, 0, 0, .08); }
+.odczyty li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 2px; border-bottom: 1px solid rgba(0, 0, 0, .08); }
+.odczyty strong { white-space: nowrap; }
+.odczyty li.niepewny { background: #fef4e6; }
+.odczyty li.niepewny strong { color: #b54708; }
+/* Miejsce na ilość pisaną rysikiem - tylko podpowiedź, nie przechwytuje dotyku. */
+.miejsce-ilosci {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  border-radius: 3px;
+  background: rgba(26, 61, 143, .05);
+  pointer-events: none;
+}
+body.wniosek-zablokowany .miejsce-ilosci { display: none; }
+
 .strona canvas { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; }
 
 /* Palec przewija i powiększa, rysik pisze. W trybie "palec pisze" warstwa

@@ -17,6 +17,11 @@ export const DYSK = {
   // AUDYTY / <nazwa inwestycji> / <typ> / <adres>_<typ>.pdf
   // Brakujące foldery aplikacja zakłada sama.
   audyty: 'AUDYTY',
+  // Wnioski materiałowe - w folderze samej inwestycji:
+  // <inwestycja> / MATERIAŁÓWKI / <PV|PC|...> / <adres> / <adres>_wniosek materiałowy PV.pdf
+  // a pozycje do „Tabeli materiałowej” obok (src/tabela-materialowa.js).
+  // Wzór wniosku leży w folderze wzorów, z "wniosek" i rodzajem w nazwie.
+  materialowki: 'MATERIAŁÓWKI',
   // Foldery typów (nazwy jak w istniejących inwestycjach).
   foldery: { pompy: 'PC', pv_me: 'PV', solary: 'KOLEKTORY', kotly: 'kotły' }
 };

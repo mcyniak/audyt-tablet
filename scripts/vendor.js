@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
 
 const katalog = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PLIKI = [
@@ -25,3 +26,12 @@ for (const [z, doCelu] of PLIKI) {
   fs.copyFileSync(path.join(katalog, z), path.join(katalog, doCelu));
   console.log(`skopiowano ${doCelu}`);
 }
+
+// SDK Claude (odczyt ilości pisanych rysikiem we wnioskach) jest pakietem npm -
+// pakujemy go do jednego modułu ES, jak w aplikacji Listy materiałowe.
+await build({
+  stdin: { contents: "export { default } from '@anthropic-ai/sdk';", resolveDir: katalog },
+  bundle: true, format: 'esm', platform: 'browser', target: 'es2022', minify: true,
+  outfile: path.join(katalog, 'public/vendor/anthropic.mjs'), logLevel: 'warning'
+});
+console.log('zbudowano public/vendor/anthropic.mjs');

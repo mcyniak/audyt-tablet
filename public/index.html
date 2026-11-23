@@ -20,6 +20,7 @@
     </div>
     <span class="znacznik-offline" id="siec" hidden><span data-ikona="offline"></span>Offline</span>
     <button class="ikona-btn" id="odswiez" type="button" aria-label="Odśwież z Dysku" hidden><span data-ikona="odswiez"></span></button>
+    <button class="btn btn-szary" id="zatwierdz-wniosek" type="button" hidden><span data-ikona="zatwierdz"></span>Zatwierdź</button>
     <button class="btn btn-glowny" id="zapisz-protokol" type="button" hidden><span data-ikona="ok"></span>Zapisz</button>
   </header>
 
@@ -56,6 +57,7 @@
       <div class="naglowek-ekranu">
         <h1 class="duzy-tytul" id="nazwa-inwestycji"></h1>
         <div class="podsumowanie" id="podsumowanie"></div>
+        <div class="segmenty tryb" id="tryb" role="group" aria-label="Co wypełniasz"></div>
       </div>
       <div class="przyklejone">
         <label class="szukaj">
@@ -138,6 +140,34 @@
       <div class="przyciski">
         <button type="submit" value="anuluj" class="btn btn-szary">Wróć</button>
         <button type="submit" value="ok" class="btn btn-glowny">Zapisz protokół</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Wniosek materiałowy: klucz do odczytu ilości pisanych rysikiem -->
+  <dialog id="dialog-klucz" class="arkusz">
+    <div class="uchwyt"></div>
+    <form method="dialog">
+      <h2>Klucz do odczytu pisma</h2>
+      <p class="arkusz-opis">Ilości pisane rysikiem odczytuje usługa Claude. Wklej klucz dostępu od administratora – wpisuje się go raz na tablecie.</p>
+      <label class="pole"><span>Klucz dostępu</span><input id="klucz-odczytu" type="password" autocomplete="off" spellcheck="false" placeholder="Wklej klucz"></label>
+      <div class="przyciski">
+        <button type="submit" value="anuluj" class="btn btn-szary">Anuluj</button>
+        <button type="submit" value="ok" class="btn btn-glowny">Zapisz klucz</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Wniosek materiałowy: zatwierdzenie kończy edycję -->
+  <dialog id="dialog-zatwierdz" class="arkusz">
+    <div class="uchwyt"></div>
+    <form method="dialog">
+      <h2>Zatwierdzić wniosek?</h2>
+      <p class="arkusz-opis">Zatwierdzony wniosek jest skończony – nie da się go już poprawić. W tabeli pojawi się data zatwierdzenia.</p>
+      <div class="podsumowanie-wniosku" id="dialog-zatwierdz-opis"></div>
+      <div class="przyciski">
+        <button type="submit" value="anuluj" class="btn btn-szary">Wróć</button>
+        <button type="submit" value="ok" class="btn btn-glowny">Zatwierdź</button>
       </div>
     </form>
   </dialog>

@@ -6,8 +6,9 @@ import { obrysKreski, sciezkaSvg, kolorRgb, KOLORY } from './atrament.js';
 
 // teksty: wynik wyliczWpisy (y od dołu strony),
 // kreski: [[kreska, ...] na stronę] (y od góry strony),
-// fontkit: window.fontkit w przeglądarce, moduł @pdf-lib/fontkit w testach.
-export async function zbudujPdf({ szablon, czcionka, fontkit, teksty, kreski, tytul }) {
+// fontkit: window.fontkit w przeglądarce, moduł @pdf-lib/fontkit w testach,
+// zalaczniki: [{ nazwa, bajty, mimeType, opis }] - pliki osadzone w PDF.
+export async function zbudujPdf({ szablon, czcionka, fontkit, teksty, kreski, tytul, zalaczniki = [] }) {
   const pdf = await PDFDocument.load(szablon);
   pdf.registerFontkit(fontkit);
   // Własna czcionka, bo standardowe czcionki PDF nie mają "ą, ę, ł...".
@@ -21,7 +22,8 @@ export async function zbudujPdf({ szablon, czcionka, fontkit, teksty, kreski, ty
     const { x: x0, y: y0 } = strona.getMediaBox();
     let rozmiar = t.rozmiar;
     if (t.maxSzer) rozmiar = Math.min(rozmiar, rozmiar * t.maxSzer / font.widthOfTextAtSize(t.tekst, rozmiar));
-    strona.drawText(t.tekst, { x: x0 + t.x, y: y0 + t.y, size: rozmiar, font, color: rgb(r, g, b) });
+    const kolor = t.kolor ? kolorRgb(t.kolor) : [r, g, b];
+    strona.drawText(t.tekst, { x: x0 + t.x, y: y0 + t.y, size: rozmiar, font, color: rgb(...kolor) });
   }
 
   kreski.forEach((kreskiStrony, i) => {
@@ -36,6 +38,10 @@ export async function zbudujPdf({ szablon, czcionka, fontkit, teksty, kreski, ty
       strona.drawSvgPath(d, { x: x0, y: y0 + height, color: rgb(kr, kg, kb), borderWidth: 0 });
     }
   });
+
+  for (const z of zalaczniki) {
+    await pdf.attach(z.bajty, z.nazwa, { mimeType: z.mimeType, description: z.opis });
+  }
 
   if (tytul) pdf.setTitle(tytul);
   pdf.setProducer('Audyt (tablet)');

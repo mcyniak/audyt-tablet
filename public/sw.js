@@ -2,7 +2,7 @@
 // startowała w terenie bez internetu. Strategia: najpierw sieć (świeża
 // wersja po aktualizacji), przy braku sieci - kopia z pamięci.
 // Zmień WERSJA przy każdym wydaniu, żeby stare pliki zostały wyrzucone.
-const WERSJA = 'audyt-v10';
+const WERSJA = 'audyt-v11';
 const PLIKI = [
   './',
   'index.html',
@@ -12,6 +12,9 @@ const PLIKI = [
   'src/google.js',
   'src/wzory.js',
   'src/ankieta.js',
+  'src/wniosek.js',
+  'src/tabela-materialowa.js',
+  'src/odczyt-pisma.js',
   'src/ikony.js',
   'vendor/inter-latin.woff2',
   'vendor/inter-latin-ext.woff2',
@@ -27,6 +30,7 @@ const PLIKI = [
   'vendor/pdf-lib.esm.min.js',
   'vendor/fontkit.umd.min.js',
   'vendor/perfect-freehand.mjs',
+  'vendor/anthropic.mjs',
   'vendor/DejaVuSansCondensed.ttf',
   'manifest.webmanifest',
   'icons/icon.svg'

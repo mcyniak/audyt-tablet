@@ -5,13 +5,22 @@ import { normalizuj } from './tabela.js';
 
 export function rozpoznajWzor(nazwaPliku) {
   const n = normalizuj(String(nazwaPliku).replace(/\.[^.]+$/, ''));
-  let typ = null;
-  if (/kotl|kociol|kotly/.test(n)) typ = 'kotly';
-  else if (/kolektor|solar/.test(n)) typ = 'solary';
-  else if (/\bpc\b|pomp|grunt|powietrz/.test(n)) typ = 'pompy';
-  else if (/\bpv\b|fotowolt|\bme\b/.test(n)) typ = 'pv_me';
+  let instalacja = null;
+  if (/kotl|kociol|kotly/.test(n)) instalacja = 'kotly';
+  else if (/kolektor|solar/.test(n)) instalacja = 'solary';
+  else if (/\bpc\b|pomp|grunt|powietrz/.test(n)) instalacja = 'pompy';
+  else if (/\bpv\b|fotowolt|\bme\b/.test(n)) instalacja = 'pv_me';
   const rodzaj = /grunt/.test(n) ? 'grunt' : /powietrz/.test(n) ? 'powietrze' : null;
-  return { typ, rodzaj };
+  // "Wniosek materiałowy PV.pdf" to nie wzór audytu PV, tylko wzór wniosku dla PV.
+  if (/wniosek|wnioski|material/.test(n)) return { typ: 'wniosek', rodzaj, instalacja };
+  return { typ: instalacja, rodzaj };
+}
+
+// Wzór wniosku dla rodzaju instalacji ("Wniosek materiałowy PC.pdf"),
+// a gdy takiego nie ma - wspólny wzór bez rodzaju w nazwie.
+export function wzorWniosku(wzory, instalacja) {
+  const wnioski = wzory.map(w => ({ ...w, ...rozpoznajWzor(w.nazwa) })).filter(w => w.typ === 'wniosek');
+  return wnioski.find(w => w.instalacja === instalacja) || wnioski.find(w => !w.instalacja) || null;
 }
 
 // Wzór dla typu instalacji; przy pompach najpierw ten zgodny z rodzajem pompy
