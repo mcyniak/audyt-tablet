@@ -32,7 +32,12 @@ npm test         # testy rozpoznawania arkuszy, także na prawdziwych tabelach z
 - `public/src/tabela-materialowa.js` – pomocnicze funkcje arkuszy (zakresy A1, daty, liczby).
   **Ten sam plik jest w repozytorium listy-materialowe** (tam zapis „Tabeli materiałowej”) – zmieniać w obu.
 - `public/app.js` – ekrany: tabela → lista adresów → adres → protokół / wniosek.
-- `public/sw.js` – tryb offline. Przy wydaniu zmień `WERSJA`.
+- `public/sw.js` – tryb offline (pamięć nazwana wersją z `config.js`).
+- **Przy każdym wydaniu zmień `WERSJA_APLIKACJI` w `public/config.js`.** Tablet z
+  internetem sam się wtedy przeładuje (także otwarty – przy powrocie do aplikacji;
+  w trakcie wypełniania dopiero po wyjściu do listy), wyloguje i pobierze listę
+  inwestycji oraz każdą otwieraną inwestycję od nowa. Niewysłane protokoły
+  i materiałówki zostają.
 - `scripts/probny-protokol.js` – wypełnia szablon przykładowymi danymi (sprawdzenie auto-wpisów).
 
 Szablony protokołów i tabele z danymi klientów **nie** trafiają do repozytorium –

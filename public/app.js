@@ -11,7 +11,7 @@ import { zakres } from './src/tabela-materialowa.js';
 import { przypiszKreski, podpisPisma, wycinekPola, odczytajIlosci, zlyKlucz } from './src/odczyt-pisma.js';
 import { ikona, wstawIkony } from './src/ikony.js';
 import * as google from './src/google.js';
-import { DYSK } from './config.js';
+import { DYSK, WERSJA_APLIKACJI } from './config.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.mjs';
 
@@ -132,6 +132,7 @@ window.addEventListener('scroll', przewiniecie, { passive: true });
 async function trasa() {
   const [ekran, ...p] = location.hash.slice(1).split('/').map(decodeURIComponent);
   if (ekran !== 'p' && ekran !== 'w') zamknijProtokol();
+  if (stan.czekaAktualizacja && ekran !== 'p' && ekran !== 'w') { location.reload(); return; }
   try {
     if (ekran === 'i') return await ekranAdresy(p[0]);
     if (ekran === 'p') return await ekranProtokol(p[0], p[1], p[2]);
@@ -153,6 +154,8 @@ $('zaloguj').addEventListener('click', async () => {
   try {
     await google.zaloguj();
     await pobierzInwestycje();
+    stan.poAktualizacji = false;
+    $('info-logowania').hidden = true;
     ekranInwestycje();
   } catch (blad) {
     $('blad-logowania').textContent = blad.message;
@@ -182,7 +185,8 @@ function zrobione(idInwestycji) {
 const szkieletListy = (ile = 6) => el('div', { class: 'lista' }, Array.from({ length: ile }, () => el('div', { class: 'szkielet' })));
 
 async function ekranInwestycje() {
-  if (!stan.inwestycje.length && navigator.onLine && !google.zalogowany()) {
+  if ((!stan.inwestycje.length || stan.poAktualizacji) && navigator.onLine && !google.zalogowany()) {
+    $('info-logowania').hidden = !stan.poAktualizacji;
     pokazEkran('ekran-start', { wstecz: false });
     return;
   }
@@ -260,7 +264,7 @@ async function pobierzZDysku(wpis) {
   } catch (blad) {
     console.warn('Nie odczytano materiałówek', blad);
   }
-  const inwestycja = { id: wpis.id, nazwa: wpis.nazwa, tabela: wpis.tabela, arkusze, materialowki, ...folder, pobrano: new Date().toISOString() };
+  const inwestycja = { id: wpis.id, nazwa: wpis.nazwa, tabela: wpis.tabela, arkusze, materialowki, ...folder, pobrano: new Date().toISOString(), wersja: WERSJA_APLIKACJI };
   await zapisz('inwestycje', wpis.id, inwestycja);
   return inwestycja;
 }
@@ -270,7 +274,10 @@ async function zaladujInwestycje(id, { odswiez = false } = {}) {
   const wpis = stan.inwestycje.find(i => i.id === id);
   let inwestycja = await odczytaj('inwestycje', id);
   let ostrzezenie = '';
-  if (wpis && navigator.onLine && (odswiez || !inwestycja)) {
+  // Inwestycja zapisana przez starszą wersję aplikacji - pobieramy od nowa,
+  // bez czekania na „Odśwież” (nowa wersja może czytać z Dysku więcej).
+  const przestarzala = inwestycja && inwestycja.wersja !== WERSJA_APLIKACJI;
+  if (wpis && navigator.onLine && (odswiez || !inwestycja || przestarzala)) {
     const [glowna] = rozbijNazwe(wpis.nazwa);
     pokazEkran('ekran-adresy', { tytul: glowna, duzyTytul: true });
     $('nazwa-inwestycji').textContent = glowna;
@@ -1558,11 +1565,44 @@ async function start() {
     stan.ostatnie = await odczytaj('ustawienia', 'ostatnie') || [];
     stan.tryb = await odczytaj('ustawienia', 'tryb') || 'audyty';
     for (const r of await wszystkie('audyty')) if (r.inwestycja) stan.audyty.set(r.klucz, { status: r.status, inwestycja: r.inwestycja, typ: r.typ, zatwierdzono: r.zatwierdzono || null });
+    await poAktualizacji();
   } catch (blad) {
     console.warn('Nie odczytano danych z pamięci tabletu', blad);
   }
   trasa();
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(blad => console.warn('Service worker', blad));
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register(`sw.js?v=${encodeURIComponent(WERSJA_APLIKACJI)}`).catch(blad => console.warn('Service worker', blad));
 }
+
+// Nowa wersja aplikacji (z internetem): wylogowanie i start od listy
+// inwestycji - po zalogowaniu lista i każda otwierana inwestycja pobierają
+// się od nowa. Niewysłane protokoły i materiałówki zostają w tablecie.
+async function poAktualizacji() {
+  const poprzednia = await odczytaj('ustawienia', 'wersja');
+  if (poprzednia === WERSJA_APLIKACJI || !navigator.onLine) return;
+  await zapisz('ustawienia', 'wersja', WERSJA_APLIKACJI);
+  if (!poprzednia && !stan.inwestycje.length) return; // pierwsze uruchomienie na tym tablecie
+  google.wyloguj();
+  stan.poAktualizacji = true;
+  history.replaceState(null, '', location.pathname + location.search);
+}
+
+// Aplikacja otwarta długo (tablet tylko usypiany): po powrocie sprawdzamy,
+// czy na serwerze nie ma nowej wersji. W trakcie wypełniania nie przeładowujemy -
+// dopiero po powrocie do listy.
+async function sprawdzAktualizacje() {
+  if (document.hidden || !navigator.onLine) return;
+  try {
+    const tekst = await (await fetch(`config.js?t=${Date.now()}`, { cache: 'no-store' })).text();
+    const nowa = /WERSJA_APLIKACJI = '([^']+)'/.exec(tekst)?.[1];
+    if (!nowa || nowa === WERSJA_APLIKACJI) return;
+    if (stan.protokol) {
+      if (!stan.czekaAktualizacja) toast('Jest nowa wersja aplikacji – zapisz i wróć do listy, wtedy się zaktualizuje.', { czas: 10000 });
+      stan.czekaAktualizacja = true;
+      return;
+    }
+    location.reload();
+  } catch { /* bez sieci - sprawdzimy następnym razem */ }
+}
+document.addEventListener('visibilitychange', sprawdzAktualizacje);
 
 start();

@@ -1,8 +1,9 @@
 // Service worker: cała aplikacja (pliki statyczne) w pamięci tabletu, żeby
 // startowała w terenie bez internetu. Strategia: najpierw sieć (świeża
 // wersja po aktualizacji), przy braku sieci - kopia z pamięci.
-// Zmień WERSJA przy każdym wydaniu, żeby stare pliki zostały wyrzucone.
-const WERSJA = 'audyt-v15';
+// Wersja przychodzi w adresie (sw.js?v=…, z WERSJA_APLIKACJI w config.js) -
+// nowa wersja = nowy service worker i nowa pamięć, stare pliki wyrzucone.
+const WERSJA = new URL(self.location.href).searchParams.get('v') || 'audyt';
 const PLIKI = [
   './',
   'index.html',

@@ -38,6 +38,12 @@ let token = (() => {
 
 export const zalogowany = () => Boolean(token && token.wygasa > Date.now() + 60_000);
 
+// Wylogowanie (po aktualizacji aplikacji) - następne zapytanie pyta o konto.
+export function wyloguj() {
+  token = null;
+  try { sessionStorage.removeItem(KLUCZ_TOKENU); } catch { /* bez pamięci sesji */ }
+}
+
 // Okno logowania Google. Po pierwszej zgodzie kolejne odnowienia (co godzinę)
 // przechodzą bez pytania - okienko tylko mignie.
 export async function zaloguj() {
