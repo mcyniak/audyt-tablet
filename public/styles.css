@@ -652,6 +652,10 @@ body.wniosek-zablokowany main { padding-bottom: 40px; }
 #zatwierdz-wniosek { min-height: 44px; padding: 0 16px; margin-right: 8px; }
 .segmenty.tryb { margin-top: 14px; }
 .podsumowanie-wniosku { margin: 0 0 16px; font-weight: 600; }
+.wybor-zestawu { display: grid; gap: 10px; max-width: 560px; margin: 24px auto; padding: 0 16px; }
+.wybor-zestawu h2 { margin: 0; font-size: 20px; }
+.wybor-zestawu p { margin: 0 0 6px; color: var(--tekst-2); }
+.wybor-zestawu .opcja.polecana { border-color: var(--marka); box-shadow: 0 0 0 2px var(--marka-tlo); }
 .podsumowanie-wniosku:empty { display: none; }
 .podsumowanie-wniosku p { margin: 0 0 8px; }
 .podsumowanie-wniosku .uwaga-odczytu { font-weight: 400; color: var(--tekst-2, #555); }

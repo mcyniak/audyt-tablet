@@ -136,6 +136,38 @@ export async function folderInwestycji(idFolderu, { wzory }) {
   };
 }
 
+// --- Materiałówki ---
+
+// Folder materiałówek inwestycji („8. Materiałówki”), w nim foldery rodzajów
+// (PC, PV, …) z PDF-ami zestawów i arkuszem „Materiałówka” (w folderze rodzaju
+// albo wspólnym w folderze materiałówek). null, gdy folderu nie ma.
+// foldery: typ instalacji -> nazwa folderu (DYSK.foldery).
+const MATERIALOWKI = /materia[lł][oó]wk/i;
+export async function materialowkiInwestycji(idInwestycji, foldery) {
+  const zawartosc = await lista(`'${idInwestycji}' in parents and mimeType = '${MIME.folder}' and trashed = false`);
+  const folder = zawartosc.find(f => MATERIALOWKI.test(f.name));
+  if (!folder) return null;
+  const wSrodku = await lista(`'${folder.id}' in parents and trashed = false`);
+  const tabela = pliki => pliki.find(p => p.mimeType === MIME.arkusz && MATERIALOWKI.test(p.name));
+  const wspolna = tabela(wSrodku);
+  const takaSama = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  const rodzaje = {};
+  for (const [typ, nazwa] of Object.entries(foldery)) {
+    const f = wSrodku.find(x => x.mimeType === MIME.folder && takaSama(x.name, nazwa));
+    if (!f) continue;
+    const pliki = await lista(`'${f.id}' in parents and trashed = false`);
+    const arkusz = tabela(pliki) || wspolna;
+    rodzaje[typ] = {
+      folder: f.id,
+      zestawy: pliki.filter(p => p.mimeType === MIME.pdf || p.mimeType === MIME.dokument)
+        .map(p => ({ id: p.id, nazwa: p.name, mimeType: p.mimeType, modifiedTime: p.modifiedTime }))
+        .sort((a, b) => a.nazwa.localeCompare(b.nazwa, 'pl', { numeric: true })),
+      tabela: arkusz ? { id: arkusz.id, nazwa: arkusz.name } : null
+    };
+  }
+  return { id: folder.id, nazwa: folder.name, rodzaje };
+}
+
 // --- Tabela montażowa ---
 
 // Arkusz Google przez Sheets API (surowe wartości - telefon 500100200 nie

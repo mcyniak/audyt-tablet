@@ -16,13 +16,6 @@ export function rozpoznajWzor(nazwaPliku) {
   return { typ: instalacja, rodzaj };
 }
 
-// Wzór wniosku dla rodzaju instalacji ("Wniosek materiałowy PC.pdf"),
-// a gdy takiego nie ma - wspólny wzór bez rodzaju w nazwie.
-export function wzorWniosku(wzory, instalacja) {
-  const wnioski = wzory.map(w => ({ ...w, ...rozpoznajWzor(w.nazwa) })).filter(w => w.typ === 'wniosek');
-  return wnioski.find(w => w.instalacja === instalacja) || wnioski.find(w => !w.instalacja) || null;
-}
-
 // Wzór dla typu instalacji; przy pompach najpierw ten zgodny z rodzajem pompy
 // z tabeli (gruntowa/powietrzna), potem ogólny, na końcu jakikolwiek PC.
 export function wybierzWzor(wzory, typ, rodzajPompy = null) {

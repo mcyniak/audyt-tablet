@@ -1,156 +1,187 @@
-// Wniosek materiałowy: pola ze wzoru, zapis do arkusza, stan do edycji w PDF.
-// Wzór przykładowy (wzory/) jest fikcyjny i leży w repozytorium.
+// Materiałówka: pola z PDF zestawu, wiersze do arkusza „Materiałówka”, daty
+// w tabeli montażowej, stan do edycji w PDF. Zestaw jest fikcyjny - budowany
+// w teście (układ jak zestawy z biura: l.p. / Nazwa / Materiał / ilość).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { PDFDocument, StandardFonts } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import { tekstSzablonu } from '../public/src/wypelnianie.js';
 import { zbudujPdf } from '../public/src/eksport.js';
-import { rozpoznajWzor, wybierzWzor, wzorWniosku } from '../public/src/wzory.js';
-import { polaWzoru, wartosciPoczatkowe, pozycjeWniosku, datyWnioskuWWierszu, zalacznikiStanu, stanZPdf } from '../public/src/wniosek.js';
-import { ZRODLO } from '../public/src/tabela-materialowa.js';
+import {
+  polaZestawu, wartosciPoczatkowe, iloscKoncowa, wierszeMaterialowki, zmianyMaterialowki, arkuszMaterialowki,
+  datyWMontazowej, datyZMontazowej, dataZKomorki, podpowiedzZestawu, zalacznikiStanu, stanZPdf
+} from '../public/src/wniosek.js';
+import { przypiszKreski } from '../public/src/odczyt-pisma.js';
 
-const WZOR = new URL('../wzory/Wniosek materiałowy PV - przykład.pdf', import.meta.url);
-const WZOR_PC = new URL('../wzory/Wniosek materiałowy PC - przykład.pdf', import.meta.url);
 const CZCIONKA = new URL('../public/vendor/DejaVuSansCondensed.ttf', import.meta.url);
-
 const otworz = bajty => pdfjs.getDocument({ data: new Uint8Array(bajty), verbosity: 0 }).promise;
 
-test('wzór wniosku nie jest brany za wzór audytu; wzór dla rodzaju instalacji', () => {
-  assert.deepEqual(rozpoznajWzor('Wniosek materiałowy PV.pdf'), { typ: 'wniosek', rodzaj: null, instalacja: 'pv_me' });
-  assert.equal(rozpoznajWzor('WNIOSKI MATERIALOWE - PC.pdf').instalacja, 'pompy');
-  assert.equal(rozpoznajWzor('PV.pdf').typ, 'pv_me');
-  const wzory = [{ nazwa: 'PV.pdf' }, { nazwa: 'Wniosek materiałowy PV.pdf' }, { nazwa: 'Wniosek materiałowy PC.pdf' }, { nazwa: 'PC powietrzne.pdf' }];
-  assert.equal(wybierzWzor(wzory, 'pv_me').nazwa, 'PV.pdf');
-  assert.equal(wybierzWzor(wzory, 'pompy', 'powietrze').nazwa, 'PC powietrzne.pdf');
-  assert.equal(wzorWniosku(wzory, 'pv_me').nazwa, 'Wniosek materiałowy PV.pdf');
-  assert.equal(wzorWniosku(wzory, 'pompy').nazwa, 'Wniosek materiałowy PC.pdf');
-  assert.equal(wzorWniosku(wzory, 'solary'), null);
-  assert.equal(wzorWniosku([{ nazwa: 'Wniosek materiałowy.pdf' }], 'solary').nazwa, 'Wniosek materiałowy.pdf');
-});
-
-test('pola z przykładowego wzoru: nagłówek i pozycje z jednostką', async () => {
-  const strony = await tekstSzablonu(await otworz(fs.readFileSync(WZOR)));
-  const pola = polaWzoru(strony);
-  assert.deepEqual(pola.slice(0, 4).map(p => [p.etykieta, p.rodzaj]), [
-    ['Inwestycja', 'inwestycja'], ['Adres', 'adres'], ['Data', 'data'], ['Ekipa', 'tekst']
-  ]);
-  const pozycje = pola.filter(p => p.rodzaj === 'ilosc');
-  assert.equal(pozycje.length, 19);
-  assert.deepEqual([pozycje[0].etykieta, pozycje[0].jednostka, pozycje[0].kolumna], ['Moduł fotowoltaiczny 450 W', 'szt.', 'Moduł fotowoltaiczny 450 W [szt.]']);
-  assert.deepEqual([pozycje[3].etykieta, pozycje[3].jednostka], ['Magazyn energii', 'kpl.']);
-  assert.deepEqual([pozycje[18].etykieta, pozycje[18].jednostka], ['Korytko kablowe', 'm']);
-  // Sekcje tabeli z wierszy wielkimi literami; tytuł wzoru nie jest sekcją.
-  assert.deepEqual([pozycje[0].sekcja, pozycje[4].sekcja, pozycje[18].sekcja], ['MODUŁY I FALOWNIK', 'KONSTRUKCJA', 'ELEKTRYKA']);
-  assert.ok(pola.slice(0, 4).every(p => p.sekcja === ''));
-  // Pole ilości leży w kolumnie "Ilość" (x ≈ 434), a nie przy nazwie.
-  assert.ok(Math.abs(pozycje[0].x - 433.9) < 1 && pozycje[0].w > 70);
-  // Pole w jednym kawałku z etykietą ("Adres: ____") zaczyna się za etykietą.
-  const adres = pola.find(p => p.rodzaj === 'adres');
-  assert.ok(adres.x > 70 && adres.x < 90, `x pola adresu: ${adres.x}`);
-  assert.equal(new Set(pola.map(p => p.id)).size, pola.length);
-});
-
-test('pola: dwa w jednej linii, jednostka za polem, powtórzone nazwy, bez Lp', () => {
-  const strony = [{
-    szer: 595, wys: 842,
-    elementy: [
-      { tekst: 'Data: ______   Kierowca: ________', x: 40, y: 800, w: 200, h: 10 },
-      { tekst: '1.', x: 40, y: 700, w: 8, h: 10 },
-      { tekst: 'Śruba M8', x: 60, y: 700, w: 40, h: 10 },
-      { tekst: '________', x: 300, y: 700, w: 50, h: 10 },
-      { tekst: 'szt.', x: 355, y: 700, w: 15, h: 10 },
-      { tekst: 'Śruba M8 ________ szt.', x: 60, y: 680, w: 120, h: 10 },
-      { tekst: 'Moduł PV ________', x: 60, y: 300, w: 90, h: 10 }
-    ]
-  }];
-  const pola = polaWzoru(strony);
-  assert.deepEqual(pola.map(p => [p.etykieta, p.jednostka, p.rodzaj, p.kolumna]), [
-    ['Data', '', 'data', 'Data'],
-    ['Kierowca', '', 'tekst', 'Kierowca'],
-    ['Śruba M8', 'szt.', 'ilosc', 'Śruba M8 [szt.]'],
-    ['Śruba M8', 'szt.', 'ilosc', 'Śruba M8 [szt.] (2)'],
-    ['Moduł PV', '', 'ilosc', 'Moduł PV']
-  ]);
-  assert.ok(pola[1].x > pola[0].x + pola[0].w);
-  assert.ok(pola.every(p => p.sekcja === ''));
-  assert.deepEqual(wartosciPoczatkowe(pola, { adres: 'Testowo 1', data: '23.11.2026' }), { data: '23.11.2026' });
-});
-
-test('wzór PC: inne pozycje, te same zasady', async () => {
-  const pola = polaWzoru(await tekstSzablonu(await otworz(fs.readFileSync(WZOR_PC))));
-  const pozycje = pola.filter(p => p.rodzaj === 'ilosc');
-  assert.equal(pozycje.length, 15);
-  assert.deepEqual([pozycje[0].kolumna, pozycje[0].sekcja], ['Pompa ciepła powietrzna 8 kW [szt.]', 'POMPA CIEPŁA I ZASOBNIKI']);
-});
-
-test('pozycje wniosku do tabeli materiałowej: wiersz na wpisaną ilość, z adresem', () => {
-  const pola = [
-    { id: 'inwestycja', kolumna: 'Inwestycja', etykieta: 'Inwestycja', rodzaj: 'inwestycja' },
-    { id: 'adres', kolumna: 'Adres', etykieta: 'Adres', rodzaj: 'adres' },
-    { id: 'data', kolumna: 'Data', etykieta: 'Data', rodzaj: 'data' },
-    { id: 'ekipa', kolumna: 'Ekipa', etykieta: 'Ekipa', rodzaj: 'tekst' },
-    { id: 'kierowca', kolumna: 'Kierowca', etykieta: 'Kierowca', rodzaj: 'tekst' },
-    { id: 'falownik szt', kolumna: 'Falownik [szt.]', etykieta: 'Falownik', jednostka: 'szt.', sekcja: 'MODUŁY', rodzaj: 'ilosc' },
-    { id: 'kabel m', kolumna: 'Kabel [m]', etykieta: 'Kabel', jednostka: 'm', sekcja: 'ELEKTRYKA', rodzaj: 'ilosc' },
-    { id: 'hak szt', kolumna: 'Hak [szt.]', etykieta: 'Hak', jednostka: 'szt.', sekcja: 'KONSTRUKCJA', rodzaj: 'ilosc' }
+// Zestaw na 2 strony: nagłówek, tabela, ciąg dalszy bez nagłówka, podpis.
+async function zestaw() {
+  const doc = await PDFDocument.create();
+  const f = await doc.embedFont(StandardFonts.Helvetica);
+  const t = (s, x, y, tekst) => s.drawText(tekst, { x, y, size: 7, font: f });
+  const s1 = doc.addPage([595, 842]);
+  t(s1, 52, 762, 'Ekipa:'); t(s1, 367, 762, 'Data');
+  t(s1, 52, 719, 'Adres montazu'); t(s1, 404, 723, 'Set dla PC TEST'); t(s1, 420, 714, 'VPM9012');
+  t(s1, 65, 693, 'l.p.'); t(s1, 88, 693, 'Nazwa'); t(s1, 362, 693, 'Material');
+  const wiersze = [
+    ['', 'Sterownik bezprzewodowy', '', '1'],
+    ['1', 'Zawor przelaczajacy DN32', 'Armatura', '1'],
+    ['2', 'Beton 25kg', 'Inne', '5'],
+    ['3', 'Bufor 400 l', '', ''],
+    ['4', 'Glikol propylenowy', 'Inne', '80 l'],
+    ['5', 'Kolano pp 32 2k', 'PP', '20']
   ];
-  const wiersze = pozycjeWniosku({
-    pola,
-    wartosci: { inwestycja: 'Testowo', adres: 'Testowa 1', data: '23.11.2026', ekipa: 'Ekipa 2', kierowca: 'Jan', 'falownik szt': '1', 'kabel m': '35,5', 'hak szt': ' ' },
-    adres: 'Testowa 1', rodzaj: 'PV', link: 'https://example.com/p', zapisano: '2026-11-23T10:00:00',
-    rozpoczeto: '2026-11-22T08:30:00', zatwierdzono: '2026-11-23T10:00:00'
-  });
-  assert.equal(wiersze.length, 2);
-  assert.deepEqual(wiersze[1], {
-    Adres: 'Testowa 1', Rodzaj: 'PV', 'Źródło': ZRODLO.wniosek, Data: '23.11.2026', Ekipa: 'Ekipa 2', Kierowca: 'Jan',
-    Sekcja: 'ELEKTRYKA', Pozycja: 'Kabel', 'Jedn.': 'm', 'Ilość': 35.5,
-    Status: 'Zatwierdzony', 'Rozpoczęto': '22.11.2026 08:30', Zatwierdzono: '23.11.2026 10:00', 'Do sprawdzenia': '', Plik: 'https://example.com/p', Zapisano: '23.11.2026 10:00'
-  });
+  let y = 683;
+  for (const [lp, nazwa, mat, il] of wiersze) {
+    if (lp) t(s1, 67, y, lp);
+    t(s1, 88, y, nazwa);
+    if (mat) t(s1, 360, y, mat);
+    if (il) t(s1, 433, y, il);
+    y -= 9.5;
+  }
+  const s2 = doc.addPage([595, 842]);
+  t(s2, 67, 780, '6'); t(s2, 88, 780, 'Redukcja 5/4 x 1'); t(s2, 358, 780, 'Stal czarna'); t(s2, 433, 780, '6');
+  // pozycja w trzech liniach (nazwa zawinięta, l.p. i materiał w środkowej)
+  t(s2, 88, 770.5, 'Zestaw regulacyjny 3-drogowy');
+  t(s2, 66, 765.5, '7'); t(s2, 360, 765.5, 'Armatura');
+  t(s2, 88, 760.5, 'z silownikiem');
+  t(s2, 67, 751, '8'); t(s2, 88, 751, 'Kabel YDY 5x2,5'); t(s2, 360, 751, 'Elektryka');
+  t(s2, 52, 722, 'Podpis instalatora'); t(s2, 110, 722, '..........................');
+  return doc.save();
+}
+
+test('pola zestawu: nagłówek, pozycje z wydrukowaną ilością, ciąg dalszy na 2. stronie', async () => {
+  const pola = polaZestawu(await tekstSzablonu(await otworz(await zestaw())));
+  const naglowek = pola.filter(p => p.rodzaj !== 'ilosc');
+  assert.deepEqual(naglowek.map(p => [p.id, p.rodzaj, p.strona]), [['ekipa', 'tekst', 0], ['data', 'data', 0], ['adres', 'adres', 0]]);
+  const poz = pola.filter(p => p.rodzaj === 'ilosc');
+  assert.deepEqual(poz.map(p => [p.lp, p.etykieta, p.material, p.wydrukowano, p.strona]), [
+    ['', 'Sterownik bezprzewodowy', '', '1', 0],
+    ['1', 'Zawor przelaczajacy DN32', 'Armatura', '1', 0],
+    ['2', 'Beton 25kg', 'Inne', '5', 0],
+    ['3', 'Bufor 400 l', '', '', 0],
+    ['4', 'Glikol propylenowy', 'Inne', '80 l', 0],
+    ['5', 'Kolano pp 32 2k', 'PP', '20', 0],
+    ['6', 'Redukcja 5/4 x 1', 'Stal czarna', '6', 1],
+    ['7', 'Zestaw regulacyjny 3-drogowy z silownikiem', 'Armatura', '', 1],
+    ['8', 'Kabel YDY 5x2,5', 'Elektryka', '', 1]
+  ]);
+  // Kolumna ilości obejmuje wydrukowane liczby, nie wchodzi na kolumnę Materiał.
+  for (const p of poz) {
+    assert.ok(p.x <= 433 && p.x + p.w >= 440, `${p.etykieta}: ${p.x}..${p.x + p.w}`);
+    assert.ok(p.x > 390, `${p.etykieta}: kolumna zaczyna się na Materiale (${p.x})`);
+  }
+  // Środek wiersza (wys - y - 5 od góry) wypada na linii pozycji.
+  const beton = poz.find(p => p.lp === '2');
+  assert.ok(Math.abs((842 - beton.y - 5) - (842 - 664 - 3)) < 1.5);
 });
 
-test('PDF wniosku niesie stan do edycji (wartości, kreski, czysty wzór)', async () => {
-  const wzor = fs.readFileSync(WZOR);
-  const stan = { adres: 'Testowo 12', wartosci: { 'falownik szt': '2' }, kreski: [[{ kolor: '#111111', rozmiar: 1.6, rysik: true, punkty: [[100, 100, 0.5], [120, 110, 0.5]] }]], zatwierdzono: null };
+test('kreska w kolumnie ilości trafia do swojego wiersza (wiersze co 9,5 pt)', async () => {
+  const pola = polaZestawu(await tekstSzablonu(await otworz(await zestaw())));
+  const beton = pola.find(p => p.lp === '2');
+  const bufor = pola.find(p => p.lp === '3');
+  const yGora = 842 - 664 - 3; // środek wiersza „Beton” od góry strony
+  const kreska = (x, y) => ({ punkty: [[x, y - 2, 0.5], [x + 3, y + 2, 0.5]] });
+  const przypisane = przypiszKreski(pola, [[kreska(440, yGora), kreska(440, yGora + 9.5)], []], [842, 842]);
+  assert.equal(przypisane.get(beton.id).length, 1);
+  assert.equal(przypisane.get(bufor.id).length, 1);
+});
+
+test('wartości początkowe: adres i data', () => {
+  const pola = [{ id: 'ekipa', rodzaj: 'tekst' }, { id: 'data', rodzaj: 'data' }, { id: 'adres', rodzaj: 'adres' }];
+  assert.deepEqual(wartosciPoczatkowe(pola, { adres: 'Testowo 12', data: '24.11.2026' }), { data: '24.11.2026', adres: 'Testowo 12' });
+});
+
+test('wiersze Materiałówki: wydruk bez pisma, poprawka rysikiem, skreślenie do zera, niepewne', () => {
+  const pola = [
+    { id: 'p1', rodzaj: 'ilosc', etykieta: 'Beton 25kg', wydrukowano: '5' },
+    { id: 'p2', rodzaj: 'ilosc', etykieta: 'Kolano', wydrukowano: '20' },
+    { id: 'p3', rodzaj: 'ilosc', etykieta: 'Bufor', wydrukowano: '' },
+    { id: 'p4', rodzaj: 'ilosc', etykieta: 'Glikol', wydrukowano: '80 l' },
+    { id: 'p5', rodzaj: 'ilosc', etykieta: 'Kabel', wydrukowano: '' },
+    { id: 'ekipa', rodzaj: 'tekst', etykieta: 'Ekipa' }
+  ];
+  const odczyt = { wartosci: { p2: '18', p3: '1', p4: '0' }, niepewne: ['p3'] };
+  assert.equal(iloscKoncowa(pola[0], odczyt), '5');
+  assert.equal(iloscKoncowa(pola[1], odczyt), '18');
+  const w = wierszeMaterialowki({ pola, odczyt, adres: 'Testowo 12', zestaw: 'set 9012', zapisano: '2026-11-24T09:05:00', zatwierdzono: null });
+  assert.deepEqual(w.map(r => [r.towar, r.liczba, r['do sprawdzenia']]), [['Beton 25kg', 5, ''], ['Kolano', 18, ''], ['Bufor', 1, 'tak']]);
+  assert.deepEqual(w[0], { adres: 'Testowo 12', towar: 'Beton 25kg', liczba: 5, zestaw: 'set 9012', 'data zapisania': '24.11.2026 09:05', 'data zatwierdzenia': '', 'do sprawdzenia': '' });
+});
+
+test('Materiałówka: wiersze adresu zastępowane, brakujące kolumny dopisane do nagłówka', () => {
+  const wiersze = [
+    ['adres', 'towar', 'liczba'],
+    ['Testowo 12', 'Beton', 4],
+    ['Inna 1', 'Beton', 2],
+    ['ul. Testowo 12', 'Kolano', 10]
+  ];
+  const z = zmianyMaterialowki({ arkusz: 'PC', wiersze, adres: 'Testowo 12', nowe: [{ adres: 'Testowo 12', towar: 'Beton', liczba: 5, 'data zapisania': '24.11.2026 09:05' }] });
+  assert.deepEqual(z.doUsuniecia, [1, 3]);
+  assert.deepEqual(z.dane.map(d => d.range), ["'PC'!D1", "'PC'!E1", "'PC'!F1", "'PC'!G1"]);
+  assert.equal(z.dane[1].values[0][0], 'data zapisania');
+  assert.deepEqual(z.dopisz, { wiersz: 5, wartosci: [['Testowo 12', 'Beton', 5, '', '24.11.2026 09:05', '', '']] });
+  assert.equal(z.szerokosc, 7);
+  // Pusty arkusz - cały nagłówek od A1.
+  assert.equal(zmianyMaterialowki({ arkusz: 'PV', wiersze: [], adres: 'X 1', nowe: [] }).dane[0].range, "'PV'!A1");
+});
+
+test('zakładka Materiałówki dla rodzaju instalacji', () => {
+  assert.equal(arkuszMaterialowki(['PC', 'PV'], 'PV'), 'PV');
+  assert.equal(arkuszMaterialowki(['pc'], 'PC'), 'pc');
+  assert.equal(arkuszMaterialowki(['Wszystko'], 'PC'), 'Wszystko');
+  assert.equal(arkuszMaterialowki(['PC', 'Inne'], 'PV'), null);
+});
+
+const MONTAZ = [
+  ['LP', 'Imię i Nazwisko', 'Adres', 'POMPA', 'data wydania materiału', 'Data zakończenia montażu'],
+  [1, 'Jan Przykładowy', 'Testowo 12', 'VPM9012', '', ''],
+  [2, 'Anna Testowa', 'Testowo 14', 'VPM9020', 46350, 46351]
+];
+
+test('tabela montażowa: data zapisu do „wydania”, zatwierdzenia do „zakończenia” (nigdy nie czyszczona)', () => {
+  const zapis = datyWMontazowej({ arkusz: 'pompy ciepła audyt', wiersze: MONTAZ, nrWiersza: 2, zapisano: '2026-11-24T09:05:00', zatwierdzono: null });
+  assert.deepEqual(zapis, { dane: [{ range: "'pompy ciepła audyt'!E2", values: [['2026-11-24']] }], brak: [] });
+  const zatw = datyWMontazowej({ arkusz: 'PV_ME', wiersze: MONTAZ, nrWiersza: 2, zapisano: '2026-11-25T10:00:00', zatwierdzono: '2026-11-25T10:00:00' });
+  assert.deepEqual(zatw.dane.map(d => [d.range, d.values[0][0]]), [["'PV_ME'!E2", '2026-11-25'], ["'PV_ME'!F2", '2026-11-25']]);
+  const bezKolumn = datyWMontazowej({ arkusz: 'X', wiersze: [['Adres', 'Uwagi'], ['Testowo 12']], nrWiersza: 2, zapisano: '2026-11-24T09:05:00', zatwierdzono: '2026-11-24T09:05:00' });
+  assert.equal(bezKolumn.dane.length, 0);
+  assert.equal(bezKolumn.brak.length, 2);
+});
+
+test('stan materiałówki z tabeli montażowej; data z liczby seryjnej', () => {
+  assert.deepEqual(datyZMontazowej(MONTAZ, 2), { wydano: '', zakonczono: '', maKolumneZatwierdzenia: true });
+  assert.deepEqual(datyZMontazowej(MONTAZ, 3), { wydano: '46350', zakonczono: '46351', maKolumneZatwierdzenia: true });
+  assert.equal(datyZMontazowej([['Adres'], ['X']], 2).maKolumneZatwierdzenia, false);
+  assert.equal(dataZKomorki(46350), '24.11.2026');
+  assert.equal(dataZKomorki('24.11.2026'), '24.11.2026');
+});
+
+test('podpowiedź zestawu z numeru pompy w tabeli montażowej', () => {
+  const zestawy = [{ id: 'a', nazwa: 'set 9008.pdf' }, { id: 'b', nazwa: 'set 9012.pdf' }, { id: 'c', nazwa: 'set 9020.pdf' }];
+  assert.equal(podpowiedzZestawu(zestawy, [MONTAZ[1]]).id, 'b');
+  assert.equal(podpowiedzZestawu(zestawy, [['Testowo 1', '509012345']]), null); // numer w telefonie się nie liczy
+  assert.equal(podpowiedzZestawu(zestawy, [['VPM9008 / VPM9012']]), null); // niejednoznaczne
+  assert.equal(podpowiedzZestawu(zestawy, [['', 'dobrać moc']]), null);
+});
+
+test('PDF materiałówki niesie stan do edycji (wartości, kreski, czysty zestaw)', async () => {
+  const wzor = await zestaw();
+  const stan = { adres: 'Testowo 12', zestaw: 'set 9012.pdf', wartosci: { ekipa: 'E1' }, kreski: [[{ kolor: '#111111', rozmiar: 1.6, rysik: true, punkty: [[100, 100, 0.5], [120, 110, 0.5]] }]], zatwierdzono: null };
   const bajty = await zbudujPdf({
     szablon: wzor,
     czcionka: fs.readFileSync(CZCIONKA),
     fontkit,
-    teksty: [{ strona: 0, x: 436, y: 620.6, tekst: '2', rozmiar: 10 }, { strona: 0, x: 400, y: 810, tekst: 'ZATWIERDZONO', rozmiar: 9, kolor: '#c62828' }],
+    teksty: [{ strona: 0, x: 80, y: 762, tekst: 'E1', rozmiar: 10 }],
     kreski: stan.kreski,
     zalaczniki: zalacznikiStanu(stan, wzor)
   });
   const odczyt = await stanZPdf(await otworz(bajty));
-  assert.deepEqual(odczyt.stan, { wersja: 1, ...stan });
+  assert.deepEqual(odczyt.stan, { wersja: 2, ...stan });
   assert.equal(odczyt.wzor.length, wzor.length);
-  // Czysty wzór z załącznika daje te same pola co oryginał.
-  const pola = polaWzoru(await tekstSzablonu(await otworz(odczyt.wzor)));
-  assert.equal(pola.filter(p => p.rodzaj === 'ilosc').length, 19);
   assert.equal(await stanZPdf(await otworz(wzor)), null);
-});
-
-test('wiersz wniosku bez pola Data we wzorze dostaje datę rozpoczęcia', () => {
-  const pola = [{ id: 'kabel m', kolumna: 'Kabel [m]', etykieta: 'Kabel', jednostka: 'm', rodzaj: 'ilosc' }];
-  const [w] = pozycjeWniosku({ pola, wartosci: { 'kabel m': '12' }, adres: 'Testowa 1', rodzaj: 'PC', zapisano: '2026-11-24T09:00:00', rozpoczeto: '2026-11-20T07:15:00' });
-  assert.equal(w.Data, '20.11.2026');
-  assert.equal(w.Status, 'W trakcie');
-  assert.equal(w['Rozpoczęto'], '20.11.2026 07:15');
-  assert.equal(w.Zatwierdzono, '');
-});
-
-test('daty wniosku w wierszu adresu tabeli montażowej', () => {
-  const wiersze = [['Lista PV'], ['Lp.', 'Adres', 'Moc', 'Uwagi'], [1, 'Testowa 1', '5 kW'], [2, 'Testowa 2', '', 'notatka']];
-  // Brak kolumn - dopisane za ostatnią zajętą kolumną (D), w wierszu nagłówka.
-  const nowe = datyWnioskuWWierszu({ arkusz: "PV ME", wiersze, nrWiersza: 3, zapisano: '2026-11-24T09:05:00', zatwierdzono: null });
-  assert.equal(nowe.szerokosc, 6);
-  assert.deepEqual(nowe.dane, [
-    { range: "'PV ME'!E2", values: [['Wniosek materiałowy - zapisano']] },
-    { range: "'PV ME'!E3", values: [['24.11.2026 09:05']] },
-    { range: "'PV ME'!F2", values: [['Wniosek materiałowy - zatwierdzono']] }
-  ]);
-  // Istniejące kolumny (przesunięte przez biuro) - tylko zmienione komórki.
-  const z = [['Adres', 'Wniosek zatwierdzono', 'Wniosek zapisano'], ['Testowa 1', '', '24.11.2026 09:05']];
-  assert.deepEqual(datyWnioskuWWierszu({ arkusz: 'PC', wiersze: z, nrWiersza: 2, zapisano: '2026-11-24T09:05:00', zatwierdzono: '2026-11-25T12:00:00' }).dane,
-    [{ range: "'PC'!B2", values: [['25.11.2026 12:00']] }]);
 });

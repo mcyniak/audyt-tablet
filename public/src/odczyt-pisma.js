@@ -1,6 +1,6 @@
 // Ilości we wniosku materiałowym pisane rysikiem: kreski z pola ilości są
 // wycinane (sam atrament na białym tle, bez wzoru) i odczytywane przez Claude
-// jednym zapytaniem na wniosek. Tani i szybki model, jak w aplikacji Listy
+// jednym zapytaniem na materiałówkę. Tani i szybki model, jak w aplikacji Listy
 // materiałowe. Niepewne odczyty trafiają do tabeli z „Do sprawdzenia: tak”.
 //
 // Funkcje przypisania kresek do pól są czyste (testy w Node); wycinki i
@@ -26,7 +26,7 @@ function ramka(kreska) {
 const srodekPolaY = (pole, wysStrony) => wysStrony - pole.y - 5;
 
 /**
- * pola: pola wzoru z polaWzoru (strona, x, y, w, rodzaj), kreski: [[kreska] na stronę],
+ * pola: pola zestawu z polaZestawu (strona, x, y, w, rodzaj), kreski: [[kreska] na stronę],
  * wysokosci: wysokość każdej strony w punktach.
  * @returns {Map<string, object[]>} id pola ilości -> jego kreski
  */
@@ -112,7 +112,12 @@ const SCHEMAT = {
   }
 };
 
-const INSTRUKCJA = `Odczytujesz ilości materiałów napisane odręcznie rysikiem na tablecie we wniosku materiałowym (montaż instalacji fotowoltaicznych i pomp ciepła). Każdy obraz to jedno pole ilości: samo pismo na białym tle. Przed obrazem jest numer pola, nazwa materiału i jednostka - pomagają ocenić, czy odczyt ma sens, ale zapisuj to, co napisano.
+const INSTRUKCJA = `Odczytujesz ilości materiałów napisane odręcznie rysikiem na tablecie w materiałówce (lista materiałów do montażu pompy ciepła albo fotowoltaiki). Każdy obraz to jedno pole ilości: samo pismo na białym tle, bez wydruku. Przed obrazem jest numer pola, nazwa materiału i - gdy jest - ilość wydrukowana na liście. Nazwa pomaga ocenić, czy odczyt ma sens, ale zapisuj to, co napisano.
+
+Gdy podano wydrukowaną ilość, pismo jest jej poprawką:
+- samo skreślenie (kreska, zygzak, krzyżyk) bez nowej liczby = magazynier nie wydaje tej pozycji: odczyt "0",
+- nowa liczba (obok albo na skreśleniu) = ta liczba; kreskę skreślenia pomiń,
+- sam znak potwierdzenia (ptaszek, "ok") = wydrukowana ilość bez zmian: zwróć ją.
 
 Zasady:
 - Przepisz dokładnie to, co napisano: zwykle liczbę ("12", "2,5", "35"). Nie licz, nie zaokrąglaj, nie dopisuj jednostki. Przecinek dziesiętny zapisz jako przecinek.
@@ -133,7 +138,7 @@ export async function odczytajIlosci({ klucz, pola }) {
   // Klucz wpisuje biuro na tablecie i zostaje w jego pamięci - stąd dangerouslyAllowBrowser.
   const client = new Anthropic({ apiKey: klucz, dangerouslyAllowBrowser: true, maxRetries: 4 });
   const content = pola.flatMap(p => [
-    { type: 'text', text: `Pole ${p.nr}: ${p.etykieta}${p.jednostka ? ` [${p.jednostka}]` : ''}` },
+    { type: 'text', text: `Pole ${p.nr}: ${p.etykieta}${p.jednostka ? ` [${p.jednostka}]` : ''}${p.wydrukowano ? ` – wydrukowano: ${p.wydrukowano}` : ' – bez wydrukowanej ilości'}` },
     { type: 'image', source: { type: 'base64', media_type: 'image/png', data: p.obraz } }
   ]);
   content.push({ type: 'text', text: 'Odczytaj ilości we wszystkich polach.' });

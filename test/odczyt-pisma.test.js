@@ -1,8 +1,8 @@
-// Kreski z rysika -> pola ilości wniosku (bez Claude; sam odczyt wymaga klucza).
+// Kreski z rysika -> pola ilości materiałówki (bez Claude; sam odczyt wymaga klucza).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { przypiszKreski, podpisPisma } from '../public/src/odczyt-pisma.js';
-import { pozycjeWniosku } from '../public/src/wniosek.js';
+import { wierszeMaterialowki } from '../public/src/wniosek.js';
 
 const WYS = 842;
 // Dwa pola ilości jedno pod drugim (linie bazowe 600 i 582 od dołu) i pole tekstowe.
@@ -31,7 +31,7 @@ test('kreski trafiają do pola, na którego linii leżą', () => {
   assert.equal(przypiszKreski(pola, [[]], [WYS]).size, 0);
 });
 
-test('niepewny odczyt -> „Do sprawdzenia” w tabeli', () => {
-  const wiersze = pozycjeWniosku({ pola, wartosci: { falownik: '1', modul: '7' }, niepewne: ['modul'], adres: 'Testowa 1', rodzaj: 'PV' });
-  assert.deepEqual(wiersze.map(w => [w.Pozycja, w['Ilość'], w['Do sprawdzenia']]), [['Falownik', 1, ''], ['Moduł', 7, 'tak']]);
+test('niepewny odczyt -> „do sprawdzenia” w Materiałówce', () => {
+  const wiersze = wierszeMaterialowki({ pola, odczyt: { wartosci: { falownik: '1', modul: '7' }, niepewne: ['modul'] }, adres: 'Testowa 1' });
+  assert.deepEqual(wiersze.map(w => [w.towar, w.liczba, w['do sprawdzenia']]), [['Falownik', 1, ''], ['Moduł', 7, 'tak']]);
 });

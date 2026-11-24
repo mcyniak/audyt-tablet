@@ -4,10 +4,10 @@ import { odczytaj, zapisz, usun, wszystkie } from './src/magazyn.js';
 import { wyliczWpisy, tekstSzablonu } from './src/wypelnianie.js';
 import { utworzEdytor } from './src/edytor.js';
 import { zbudujPdf } from './src/eksport.js';
-import { wybierzWzor, wzorWniosku, rozpoznajWzor } from './src/wzory.js';
+import { wybierzWzor } from './src/wzory.js';
 import { PYTANIA_PV, kolumnyPytan, odpowiedziZWiersza, znajdzWiersz, zmianyWiersza, pytaniaNaWzorze, odpowiedziZProtokolu } from './src/ankieta.js';
-import { polaWzoru, wartosciPoczatkowe, pozycjeWniosku, datyWnioskuWWierszu, KOLUMNY_MONTAZOWE, dataCzytelna, zalacznikiStanu, stanZPdf } from './src/wniosek.js';
-import * as tabelaMat from './src/tabela-materialowa.js';
+import { polaZestawu, wartosciPoczatkowe, iloscKoncowa, wierszeMaterialowki, zmianyMaterialowki, arkuszMaterialowki, datyWMontazowej, datyZMontazowej, podpowiedzZestawu, blokiDoUsuniecia, dataCzytelna, zalacznikiStanu, stanZPdf } from './src/wniosek.js';
+import { zakres } from './src/tabela-materialowa.js';
 import { przypiszKreski, podpisPisma, wycinekPola, odczytajIlosci, zlyKlucz } from './src/odczyt-pisma.js';
 import { ikona, wstawIkony } from './src/ikony.js';
 import * as google from './src/google.js';
@@ -27,7 +27,6 @@ const stan = {
   wynik: null, // zbudujListeAdresow dla otwartej inwestycji
   audyty: new Map(), // klucz protokołu/wniosku -> { status, inwestycja, typ, zatwierdzono }
   tryb: 'audyty', // lista adresów: 'audyty' albo 'wnioski' (wnioski materiałowe)
-  statusyWnioskow: new Map(), // kluczWniosku(adres, rodzaj) -> status z arkusza Wnioski tabeli materiałowej
   szukajInwestycji: '',
   szukajAdresu: '',
   filtrTypu: null,
@@ -136,7 +135,7 @@ async function trasa() {
   try {
     if (ekran === 'i') return await ekranAdresy(p[0]);
     if (ekran === 'p') return await ekranProtokol(p[0], p[1], p[2]);
-    if (ekran === 'w') return await ekranWniosek(p[0], p[1], p[2]);
+    if (ekran === 'w') return await ekranWniosek(p[0], p[1], p[2], p[3]);
     return await ekranInwestycje();
   } catch (blad) {
     console.error(blad);
@@ -252,14 +251,16 @@ async function pobierzZDysku(wpis) {
     const zapisany = await odczytaj('szablony', w.id);
     if (zapisany?.modifiedTime !== w.modifiedTime) await zapisz('szablony', w.id, { nazwa: w.nazwa, modifiedTime: w.modifiedTime, bajty: await google.pobierzPlik(w) });
   }
-  // Statusy wniosków z tabeli materiałowej - jej brak albo błąd nie blokuje audytów.
-  let wnioski = [];
+  // Materiałówki: zestawy (PDF, od razu do pamięci tabletu) i arkusz
+  // „Materiałówka” - brak albo błąd nie blokuje audytów.
+  let materialowki = null;
   try {
-    wnioski = await tabelaMat.odczytajWnioski(google, await tabelaMat.tabelaMaterialowa(google, wpis.id, { utworz: false }));
+    materialowki = await google.materialowkiInwestycji(wpis.id, DYSK.foldery);
+    for (const r of Object.values(materialowki?.rodzaje || {})) for (const z of r.zestawy) await wersjaWzoru(z);
   } catch (blad) {
-    console.warn('Nie odczytano tabeli materiałowej', blad);
+    console.warn('Nie odczytano materiałówek', blad);
   }
-  const inwestycja = { id: wpis.id, nazwa: wpis.nazwa, tabela: wpis.tabela, arkusze, wnioski, ...folder, pobrano: new Date().toISOString() };
+  const inwestycja = { id: wpis.id, nazwa: wpis.nazwa, tabela: wpis.tabela, arkusze, materialowki, ...folder, pobrano: new Date().toISOString() };
   await zapisz('inwestycje', wpis.id, inwestycja);
   return inwestycja;
 }
@@ -289,7 +290,6 @@ async function zaladujInwestycje(id, { odswiez = false } = {}) {
   stan.szukajAdresu = '';
   $('szukaj-adresu').value = '';
   stan.ostrzezenieOdswiezania = ostrzezenie;
-  stan.statusyWnioskow = tabelaMat.statusyWnioskow(inwestycja.wnioski);
 
   stan.ostatnie = [id, ...stan.ostatnie.filter(x => x !== id)].slice(0, 10);
   if (wpis) wpis.razem = stan.wynik.adresy.filter(a => !a.rezygnacja).length;
@@ -317,14 +317,28 @@ const kluczWniosku = (idInwestycji, idAdresu, typ) => `${idInwestycji}|${idAdres
 // Rodzaj w tabeli materiałowej i nazwa folderu: PV, PC, KOLEKTORY, kotły.
 const rodzajWniosku = typ => DYSK.foldery[typ] || typ;
 
-// Wniosek: zatwierdzony (w tablecie albo w arkuszu z innego urządzenia),
-// czeka na wysyłkę, rozpoczęty, albo brak.
+// Wiersze adresu w tabeli montażowej (arkusz danego rodzaju instalacji).
+const wierszeMontazowe = (a, typ) => a.rekordy.filter(r => r.typ === typ).map(({ arkusz, wiersz, uid, adres }) => ({ arkusz, wiersz, uid, adres }));
+
+// Daty materiałówki z tabeli montażowej wczytanej z inwestycją.
+function datyAdresu(a, typ) {
+  const d = { wydano: '', zakonczono: '' };
+  for (const r of wierszeMontazowe(a, typ)) {
+    const z = datyZMontazowej(wierszeArkusza(r.arkusz), r.wiersz);
+    d.wydano ||= z.wydano;
+    d.zakonczono ||= z.zakonczono;
+  }
+  return d;
+}
+
+// Materiałówka: zatwierdzona (w tablecie albo w tabeli montażowej z innego
+// urządzenia), czeka na wysyłkę, rozpoczęta, albo brak.
 function statusWniosku(a, typ) {
   const lokalny = stan.audyty.get(kluczWniosku(stan.inwestycja.id, a.id, typ));
-  const zArkusza = stan.statusyWnioskow.get(tabelaMat.kluczWniosku(a.adres, rodzajWniosku(typ)));
-  if (lokalny?.zatwierdzono || (zArkusza?.zatwierdzony && (!lokalny || lokalny.status === 'wyslany'))) return 'zatwierdzony';
+  const zTabeli = datyAdresu(a, typ);
+  if (lokalny?.zatwierdzono || (zTabeli.zakonczono && (!lokalny || lokalny.status === 'wyslany'))) return 'zatwierdzony';
   if (lokalny?.status === 'zapisany') return 'zapisany';
-  return lokalny?.status || zArkusza ? 'rozpoczety' : null;
+  return lokalny?.status || zTabeli.wydano ? 'rozpoczety' : null;
 }
 
 const OPIS_WNIOSKU = { zatwierdzony: 'Zatwierdzony', zapisany: 'Czeka na wysyłkę', rozpoczety: 'W trakcie' };
@@ -347,7 +361,7 @@ function renderujAdresy() {
   const wnioski = stan.tryb === 'wnioski';
   const typy = TYPY.filter(t => stan.wynik.liczniki[t.id] > 0);
   // Wnioski: najpierw rodzaj instalacji (PV / PC), potem adres - bez "Wszystkie".
-  if (wnioski && !typy.some(t => t.id === stan.filtrTypu)) stan.filtrTypu = typy.find(t => wzorWniosku(inw.wzory, t.id))?.id || typy[0]?.id || null;
+  if (wnioski && !typy.some(t => t.id === stan.filtrTypu)) stan.filtrTypu = typy.find(t => zestawyTypu(t.id).length)?.id || typy[0]?.id || null;
   const typWniosku = wnioski ? stan.filtrTypu : null;
   const sWniosku = a => statusWniosku(a, typWniosku);
   pokazEkran('ekran-adresy', { tytul: glowna, odswiez: true, duzyTytul: true });
@@ -356,15 +370,15 @@ function renderujAdresy() {
     const adresyTypu = aktywne.filter(a => a.typy.includes(typWniosku));
     const zatwierdzone = adresyTypu.filter(a => sWniosku(a) === 'zatwierdzony').length;
     const wTrakcie = adresyTypu.filter(a => ['rozpoczety', 'zapisany'].includes(sWniosku(a))).length;
-    wstaw($('podsumowanie'), [pasekPostepu(zatwierdzone, adresyTypu.length), el('span', {}, el('strong', {}, String(zatwierdzone)), ` z ${adresyTypu.length} wniosków zatwierdzonych`, wTrakcie ? ` · ${wTrakcie} w trakcie` : '')]);
+    wstaw($('podsumowanie'), [pasekPostepu(zatwierdzone, adresyTypu.length), el('span', {}, el('strong', {}, String(zatwierdzone)), ` z ${adresyTypu.length} materiałówek zatwierdzonych`, wTrakcie ? ` · ${wTrakcie} w trakcie` : '')]);
   } else {
     const ile = zrobione(inw.id);
     wstaw($('podsumowanie'), [pasekPostepu(ile, aktywne.length), el('span', {}, el('strong', {}, String(ile)), ` z ${aktywne.length} adresów zrobione`)]);
   }
-  // Przełącznik audyty / wnioski - tylko gdy inwestycja ma jakiś wzór wniosku.
+  // Przełącznik audyty / materiałówki - tylko gdy inwestycja ma zestawy.
   const przelacznik = (tryb, etykieta) => el('button', { type: 'button', 'aria-pressed': String(stan.tryb === tryb), onclick: () => ustawTryb(tryb) }, etykieta);
-  const maWnioski = inw.wzory.some(w => rozpoznajWzor(w.nazwa).typ === 'wniosek');
-  wstaw($('tryb'), maWnioski || wnioski ? [przelacznik('audyty', 'Audyty'), przelacznik('wnioski', 'Wnioski materiałowe')] : []);
+  const maWnioski = Object.values(inw.materialowki?.rodzaje || {}).some(r => r.zestawy.length);
+  wstaw($('tryb'), maWnioski || wnioski ? [przelacznik('audyty', 'Audyty'), przelacznik('wnioski', 'Materiałówki')] : []);
 
   const segment = (id, etykieta, liczba) => el('button', { type: 'button', 'aria-pressed': String(stan.filtrTypu === id), onclick: () => { stan.filtrTypu = id; renderujAdresy(); } },
     etykieta, el('span', { class: 'ile' }, String(liczba)));
@@ -375,7 +389,7 @@ function renderujAdresy() {
 
   const nazwaRodzaju = TYP[typWniosku]?.etykieta || '';
   pokazUwage('info-adresy', stan.ostrzezenieOdswiezania || (wnioski
-    ? (wzorWniosku(inw.wzory, typWniosku) ? '' : `Brak wzoru wniosku materiałowego${nazwaRodzaju ? ` dla: ${nazwaRodzaju}` : ''}. Wrzuć go do folderu „${inw.folderWzorow?.nazwa || 'Wzory audytów'}” tej inwestycji (plik ze słowem „wniosek” i rodzajem instalacji w nazwie, np. „Wniosek materiałowy ${rodzajWniosku(typWniosku || 'pv_me')}.pdf”) i odśwież.`)
+    ? (zestawyTypu(typWniosku).length ? '' : `Brak zestawów materiałówek${nazwaRodzaju ? ` dla: ${nazwaRodzaju}` : ''}. Wrzuć PDF-y zestawów do folderu „${folderMaterialowek()} / ${rodzajWniosku(typWniosku || 'pompy')}” tej inwestycji i odśwież.`)
     : brakujaceWzory()));
 
   const fraza = normalizuj(stan.szukajAdresu);
@@ -465,12 +479,12 @@ const takaSama = nazwa => n => normalizuj(n) === normalizuj(nazwa);
 
 // Protokół i zdjęcia trafiają do:
 //   INWESTYCJE_3 / AUDYTY / <inwestycja> / <PC|PV|KOLEKTORY|kotły> / <adres> /
-// wnioski materiałowe do folderu samej inwestycji:
-//   INWESTYCJE_3 / <inwestycja> / MATERIAŁÓWKI / <PV|PC|...> / <adres> /
+// materiałówki do folderu materiałówek inwestycji, obok zestawów:
+//   INWESTYCJE_3 / <inwestycja> / <…Materiałówki> / <PC|PV|...> / <adres> /
 // Brakujące foldery zakładamy; id folderu typu zapamiętujemy w ustawieniach,
 // id folderu adresu w protokole (rekord.drive.folder).
 const kluczFolderu = rekord => rekord.typ === 'wniosek'
-  ? `folder|${rekord.inwestycja}|wniosek|${rekord.instalacja}`
+  ? `folder|${rekord.inwestycja}|materialowka|${rekord.instalacja}`
   : `folder|${rekord.inwestycja}|${rekord.typ}`;
 
 async function folderTypu(rekord) {
@@ -479,10 +493,10 @@ async function folderTypu(rekord) {
   if (zapamietany) return zapamietany;
   let idTypu;
   if (rekord.typ === 'wniosek') {
-    // Id inwestycji to id jej folderu w INWESTYCJE_3.
-    const idMat = await google.folderPodrzedny(rekord.inwestycja, takaSama(DYSK.materialowki), DYSK.materialowki);
+    const { materialowki } = await odczytaj('inwestycje', rekord.inwestycja);
+    if (!materialowki) throw new Error('w inwestycji nie ma folderu materiałówek');
     const rodzaj = rodzajWniosku(rekord.instalacja);
-    idTypu = await google.folderPodrzedny(idMat, takaSama(rodzaj), rodzaj);
+    idTypu = materialowki.rodzaje?.[rekord.instalacja]?.folder || await google.folderPodrzedny(materialowki.id, takaSama(rodzaj), rodzaj);
   } else {
     const inw = await odczytaj('inwestycje', rekord.inwestycja);
     const idDysku = await google.idDysku(DYSK.inwestycje);
@@ -769,7 +783,7 @@ let adresyMiniatur = [];
 function renderujZdjecia() {
   for (const u of adresyMiniatur) URL.revokeObjectURL(u);
   adresyMiniatur = [];
-  // Wnioski materiałowe są bez zdjęć.
+  // Materiałówki są bez zdjęć.
   const otwarty = stan.protokol?.rekord && stan.protokol.rekord.typ !== 'wniosek' ? stan.protokol : null;
   const zdjecia = otwarty?.rekord.zdjecia || [];
   $('licznik-zdjec').hidden = !zdjecia.length;
@@ -979,21 +993,26 @@ $('zapisz-protokol').addEventListener('click', async () => {
   }
 });
 
-// --- Wniosek materiałowy ---
+// --- Materiałówka (wniosek materiałowy) ---
 //
-// Szef magazynu wybiera rodzaj instalacji (PV / PC) i adres, wypełnia wzór
-// rysikiem - także ilości w polach "____" (odczytuje je Claude przy
-// zatwierdzeniu albo wysyłce, src/odczyt-pisma.js); z klawiatury tylko pola
-// tekstowe nagłówka. Zapis: PDF do
-// <inwestycja> / MATERIAŁÓWKI / <PV|PC> / <adres>, pozycje i status do
-// „Tabeli materiałowej” inwestycji. Zatwierdzenie kończy edycję.
+// Szef magazynu wybiera rodzaj instalacji (przełącznik u góry listy), adres
+// i zestaw - PDF z folderu <inwestycja> / <…Materiałówki> / <PC|PV>.
+// Ilości z wydruku zostają; poprawki (skreślenie, nowa liczba) i puste
+// pozycje pisze rysikiem - odczytuje je Claude przy zatwierdzeniu albo
+// wysyłce (src/odczyt-pisma.js). Zapis: PDF do folderu adresu obok zestawów,
+// wiersze do arkusza „Materiałówka”, data zapisu i zatwierdzenia do tabeli
+// montażowej. Zatwierdzenie kończy edycję; biuro odblokowuje, czyszcząc
+// datę zakończenia w tabeli montażowej.
 
-const nazwaPlikuWniosku = (adres, typ) => bezpiecznaNazwa(`${adres}_wniosek materiałowy ${rodzajWniosku(typ)}`) + '.pdf';
+const zestawyTypu = typ => stan.inwestycja?.materialowki?.rodzaje?.[typ]?.zestawy || [];
+const folderMaterialowek = () => (stan.inwestycja?.materialowki?.nazwa || 'Materiałówki').trim();
+const bezPdf = nazwa => String(nazwa || '').replace(/\.pdf$/i, '').trim();
+const nazwaPlikuWniosku = (adres, zestaw) => bezpiecznaNazwa(`${adres}_${bezPdf(zestaw) || 'materiałówka'}`) + '.pdf';
 const dataDzisiaj = () => dataCzytelna(new Date().toISOString()).slice(0, 10);
 const ROZMIAR_WPISU = 10;
 
-// Wzór zapamiętany z wersją: biuro może podmienić plik wzoru, a rozpoczęty
-// wniosek ma zostać na tym, na którym go zaczęto.
+// Zestaw zapamiętany z wersją: biuro może podmienić plik, a rozpoczęta
+// materiałówka ma zostać na tym, na którym ją zaczęto.
 async function wersjaWzoru(wzor) {
   const klucz = `${wzor.id}@${wzor.modifiedTime}`;
   if (await odczytaj('szablony', klucz)) return klucz;
@@ -1007,20 +1026,17 @@ async function wersjaWzoru(wzor) {
   return klucz;
 }
 
-// Wniosek tego adresu na Dysku - bez zakładania folderów.
+// Materiałówka tego adresu na Dysku - bez zakładania folderów.
 async function znajdzWniosekNaDysku(a, typ) {
-  let idTypu = await odczytaj('ustawienia', kluczFolderu({ typ: 'wniosek', inwestycja: stan.inwestycja.id, instalacja: typ }));
-  if (!idTypu) {
-    const idMat = await google.znajdzFolder(stan.inwestycja.id, takaSama(DYSK.materialowki));
-    idTypu = idMat && await google.znajdzFolder(idMat, takaSama(rodzajWniosku(typ)));
-  }
+  const idTypu = stan.inwestycja.materialowki?.rodzaje?.[typ]?.folder;
   const idAdresu = idTypu && await google.znajdzFolder(idTypu, takaSama(bezpiecznaNazwa(a.adres)));
   if (!idAdresu) return null;
-  return (await google.plikiPdf(idAdresu)).find(p => takaSama(nazwaPlikuWniosku(a.adres, typ))(p.name)) || null;
+  const prefiks = normalizuj(bezpiecznaNazwa(a.adres));
+  return (await google.plikiPdf(idAdresu)).find(p => normalizuj(p.name).startsWith(prefiks)) || null;
 }
 
-// Wersja z Dysku, gdy w tablecie jej nie ma albo na Dysku jest nowsza (wniosek
-// poprawiany na innym urządzeniu). Niewysłane zmiany z tabletu mają pierwszeństwo.
+// Wersja z Dysku, gdy w tablecie jej nie ma albo na Dysku jest nowsza
+// (poprawiana na innym urządzeniu). Niewysłane zmiany z tabletu mają pierwszeństwo.
 async function wniosekZDysku(rekord, a, klucz, typ) {
   if (rekord && rekord.status !== 'wyslany') return null;
   let plik = rekord?.drive?.id ? await google.metadanePliku(rekord.drive.id) : null;
@@ -1034,7 +1050,7 @@ async function wniosekZDysku(rekord, a, klucz, typ) {
   const s = odczyt.stan;
   const kluczWzoru = s.wzor?.klucz || `wniosek|${plik.id}`;
   if (!await odczytaj('szablony', kluczWzoru)) {
-    await zapisz('szablony', kluczWzoru, { nazwa: s.wzor?.nazwa || 'Wzór wniosku', modifiedTime: s.wzor?.modifiedTime || null, bajty: odczyt.wzor.slice().buffer });
+    await zapisz('szablony', kluczWzoru, { nazwa: s.wzor?.nazwa || 'Zestaw', modifiedTime: s.wzor?.modifiedTime || null, bajty: odczyt.wzor.slice().buffer });
   }
   const zDysku = {
     klucz,
@@ -1044,6 +1060,7 @@ async function wniosekZDysku(rekord, a, klucz, typ) {
     typ: 'wniosek',
     instalacja: typ,
     wzor: kluczWzoru,
+    zestaw: s.zestaw || s.wzor?.nazwa || null,
     wartosci: s.wartosci || {},
     kreski: s.kreski || null,
     pola: s.pola || null,
@@ -1053,6 +1070,7 @@ async function wniosekZDysku(rekord, a, klucz, typ) {
     rozpoczeto: s.rozpoczeto,
     zmieniono: s.zmieniono,
     zatwierdzono: s.zatwierdzono || null,
+    zatwierdzenieWTabeli: Boolean(s.zatwierdzono),
     status: 'wyslany',
     nazwaPliku: plik.name,
     drive: { id: plik.id, link: plik.webViewLink, folder: plik.parents?.[0], modifiedTime: plik.modifiedTime }
@@ -1061,18 +1079,47 @@ async function wniosekZDysku(rekord, a, klucz, typ) {
   return zDysku;
 }
 
-// Biuro może odblokować zatwierdzony wniosek, czyszcząc "Zatwierdzono"
-// w arkuszu Wnioski tabeli materiałowej.
+// Biuro odblokowuje zatwierdzoną materiałówkę, czyszcząc datę zakończenia
+// w wierszu adresu w tabeli montażowej. Tylko gdy ta data była tam wpisana
+// przez aplikację - inaczej pusta komórka nic nie znaczy.
 async function odblokowanyWArkuszu(rekord) {
-  let wiersze;
+  if (!rekord.zatwierdzenieWTabeli || !rekord.wiersze?.length) return false;
+  const { tabela } = await odczytaj('inwestycje', rekord.inwestycja);
+  if (tabela.mimeType !== google.MIME.arkusz) return false;
   try {
-    wiersze = await tabelaMat.odczytajWnioski(google, await tabelaMat.tabelaMaterialowa(google, rekord.inwestycja, { utworz: false }));
+    for (const cel of rekord.wiersze) {
+      const wiersze = await google.wartosciArkusza(tabela.id, cel.arkusz);
+      const nr = znajdzWiersz(wiersze, cel);
+      const daty = nr && datyZMontazowej(wiersze, nr);
+      if (!daty || !daty.maKolumneZatwierdzenia || daty.zakonczono) return false;
+    }
+    return true;
   } catch { return false; }
-  const wpis = tabelaMat.statusyWnioskow(wiersze).get(tabelaMat.kluczWniosku(rekord.adres, rodzajWniosku(rekord.instalacja)));
-  return Boolean(wpis && !wpis.zatwierdzony);
 }
 
-async function ekranWniosek(idInwestycji, idAdresu, typ) {
+// Wybór zestawu przy nowej materiałówce: podświetlony ten, którego numer
+// (np. 9012) stoi w wierszu adresu w tabeli montażowej (np. „VPM9012”).
+function pokazWyborZestawu(otwarty, a, typ) {
+  const zestawy = zestawyTypu(typ);
+  $('strony').replaceChildren();
+  otwarty.klucz = `${otwarty.klucz}|wybor`; // wybór zestawu otwiera ten sam ekran od nowa
+  if (!zestawy.length) {
+    pokazUwage('komunikat', `Brak zestawów materiałówek dla: ${TYP[typ].etykieta}. Biuro wrzuca PDF-y zestawów do folderu „${folderMaterialowek()} / ${rodzajWniosku(typ)}” tej inwestycji.`);
+    return;
+  }
+  const podpowiedz = podpowiedzZestawu(zestawy, wierszeMontazowe(a, typ).map(r => wierszeArkusza(r.arkusz)[r.wiersz - 1] || []));
+  const kolejnosc = podpowiedz ? [podpowiedz, ...zestawy.filter(z => z !== podpowiedz)] : zestawy;
+  const adresTrasy = z => `w/${encodeURIComponent(stan.inwestycja.id)}/${encodeURIComponent(a.id)}/${typ}/${encodeURIComponent(z.id)}`;
+  $('strony').append(el('div', { class: 'wybor-zestawu' },
+    el('h2', {}, 'Wybierz zestaw'),
+    el('p', {}, podpowiedz ? 'Pierwszy zestaw pasuje do pompy wpisanej w tabeli montażowej.' : 'Zestaw zostaje przy materiałówce po pierwszym zapisie.'),
+    ...kolejnosc.map(z => el('button', { type: 'button', class: `opcja${z === podpowiedz ? ' polecana' : ''}`, onclick: () => { location.hash = adresTrasy(z); } },
+      el('span', { class: 'tresc' }, el('strong', {}, bezPdf(z.nazwa)), el('small', {}, z === podpowiedz ? 'Pasuje do tabeli montażowej' : 'Zestaw z Dysku')),
+      ikona('dalej', 'dalej')))
+  ));
+}
+
+async function ekranWniosek(idInwestycji, idAdresu, typ, idZestawu) {
   await zaladujInwestycje(idInwestycji);
   const a = stan.wynik.adresy.find(x => x.id === idAdresu);
   if (!a || !TYP[typ]) { location.hash = `i/${encodeURIComponent(idInwestycji)}`; return; }
@@ -1080,12 +1127,13 @@ async function ekranWniosek(idInwestycji, idAdresu, typ) {
   if (stan.protokol?.klucz === klucz) return;
   zamknijProtokol();
   const [nazwaInwestycji] = rozbijNazwe(stan.inwestycja.nazwa);
-  pokazEkran('ekran-protokol', { tytul: a.adres, podtytul: `Wniosek materiałowy ${rodzajWniosku(typ)} · ${nazwaInwestycji}` });
+  pokazEkran('ekran-protokol', { tytul: a.adres, podtytul: `Materiałówka ${rodzajWniosku(typ)} · ${nazwaInwestycji}` });
   document.body.classList.add('tryb-wniosek');
   pokazKontakt(a);
   $('strony').replaceChildren(el('div', { class: 'strona szkielet', style: 'aspect-ratio: 595 / 842' }));
   pokazUwage('komunikat', '');
   $('zapisz-protokol').disabled = true;
+  $('zatwierdz-wniosek').disabled = true;
 
   const otwarty = { klucz, rekord: null };
   stan.protokol = otwarty;
@@ -1096,8 +1144,9 @@ async function ekranWniosek(idInwestycji, idAdresu, typ) {
       rekord = await wniosekZDysku(rekord, a, klucz, typ) || rekord;
       if (rekord?.zatwierdzono && rekord.status === 'wyslany' && await odblokowanyWArkuszu(rekord)) {
         rekord.zatwierdzono = null;
+        rekord.zatwierdzenieWTabeli = false;
         await zapiszRekord(rekord);
-        uwaga = 'Biuro wyczyściło datę zatwierdzenia w tabeli – wniosek znów można poprawiać.';
+        uwaga = 'Biuro wyczyściło datę zakończenia w tabeli montażowej – materiałówkę znów można poprawiać.';
       }
     } catch (blad) {
       console.warn(blad);
@@ -1108,19 +1157,22 @@ async function ekranWniosek(idInwestycji, idAdresu, typ) {
 
   let kluczWzoru = rekord?.wzor;
   let szablon = kluczWzoru && await odczytaj('szablony', kluczWzoru);
-  const wzor = wzorWniosku(stan.inwestycja.wzory, typ);
+  let zestaw = rekord?.zestaw || szablon?.nazwa || null;
   if (!szablon) {
-    kluczWzoru = wzor && await wersjaWzoru(wzor);
+    const zestawy = zestawyTypu(typ);
+    const wybrany = zestawy.find(z => z.id === idZestawu) || (zestawy.length === 1 ? zestawy[0] : null);
+    if (!wybrany) { pokazWyborZestawu(otwarty, a, typ); return; }
+    zestaw = wybrany.nazwa;
+    kluczWzoru = await wersjaWzoru(wybrany);
     szablon = kluczWzoru && await odczytaj('szablony', kluczWzoru);
   }
   if (stan.protokol !== otwarty) return;
   if (!szablon) {
     $('strony').replaceChildren();
-    pokazUwage('komunikat', wzor
-      ? 'Wzoru wniosku nie ma w pamięci tabletu, a nie ma internetu.'
-      : `Brak wzoru wniosku materiałowego dla: ${TYP[typ].etykieta}. Poproś biuro o wrzucenie go do folderu „Wzory audytów” tej inwestycji (plik ze słowem „wniosek” i „${rodzajWniosku(typ)}” w nazwie).`);
+    pokazUwage('komunikat', 'Zestawu nie ma w pamięci tabletu, a nie ma internetu.');
     return;
   }
+  pokazEkran('ekran-protokol', { tytul: a.adres, podtytul: `Materiałówka ${rodzajWniosku(typ)} · ${bezPdf(zestaw)} · ${nazwaInwestycji}` });
 
   rekord ||= {
     klucz,
@@ -1135,14 +1187,15 @@ async function ekranWniosek(idInwestycji, idAdresu, typ) {
     utworzono: new Date().toISOString()
   };
   rekord.wzor = kluczWzoru;
+  rekord.zestaw = zestaw;
   // Wiersze adresu w tabeli montażowej - tam idą daty zapisu i zatwierdzenia.
-  rekord.wiersze = a.rekordy.filter(r => r.typ === typ).map(({ arkusz, wiersz, uid, adres }) => ({ arkusz, wiersz, uid, adres }));
+  rekord.wiersze = wierszeMontazowe(a, typ);
   otwarty.rekord = rekord;
   otwarty.szablon = szablon;
   otwarty.dokument = await pdfjs.getDocument({ data: new Uint8Array(szablon.bajty.slice(0)) }).promise;
   otwarty.strony = await tekstSzablonu(otwarty.dokument);
-  otwarty.pola = polaWzoru(otwarty.strony);
-  rekord.wartosci ||= wartosciPoczatkowe(otwarty.pola, { adres: a.adres, nazwisko: a.nazwisko, inwestycja: nazwaInwestycji, data: dataDzisiaj() });
+  otwarty.pola = polaZestawu(otwarty.strony);
+  rekord.wartosci ||= wartosciPoczatkowe(otwarty.pola, { adres: a.adres, data: dataDzisiaj() });
   if (stan.protokol !== otwarty) return;
   otwarty.edytor = await utworzEdytor($('strony'), {
     dokument: otwarty.dokument,
@@ -1156,7 +1209,7 @@ async function ekranWniosek(idInwestycji, idAdresu, typ) {
   $('zapisz-protokol').disabled = false;
   $('zatwierdz-wniosek').disabled = false;
   ustawBlokade(otwarty);
-  if (!otwarty.pola.length) uwaga ||= 'We wzorze nie ma pól do wpisania („____”) – wszystko wypełnia się rysikiem.';
+  if (!otwarty.pola.some(p => p.rodzaj === 'ilosc')) uwaga ||= 'W tym PDF nie rozpoznałem tabeli pozycji (wiersza z „Nazwa”) – ilości nie trafią do Materiałówki.';
   if (!rekord.zatwierdzono && uwaga) pokazUwage('komunikat', uwaga, { neutralna: true });
 }
 
@@ -1171,7 +1224,8 @@ function polaNaStronach(otwarty) {
     const proc = (v, z) => `${(v / z * 100).toFixed(3)}%`;
     // Ilość pisze się rysikiem - tylko lekkie podświetlenie miejsca.
     if (p.rodzaj === 'ilosc') {
-      s.div.append(el('div', { class: 'miejsce-ilosci', style: `left:${proc(p.x, s.szer)};width:${proc(p.w, s.szer)};top:${proc(s.wys - p.y - 14, s.wys)};height:${proc(19, s.wys)}` }));
+      const h = p.h || 19;
+      s.div.append(el('div', { class: 'miejsce-ilosci', style: `left:${proc(p.x, s.szer)};width:${proc(p.w, s.szer)};top:${proc(s.wys - p.y - 5 - h / 2, s.wys)};height:${proc(h, s.wys)}` }));
       continue;
     }
     const wejscie = el('input', {
@@ -1181,8 +1235,8 @@ function polaNaStronach(otwarty) {
       enterkeyhint: 'next',
       autocomplete: 'off',
       spellcheck: 'false',
-      'aria-label': p.kolumna,
-      title: p.kolumna,
+      'aria-label': p.kolumna || p.etykieta,
+      title: p.kolumna || p.etykieta,
       style: `left:${proc(p.x, s.szer)};width:${proc(p.w, s.szer)};top:${proc(s.wys - p.y - 12.5, s.wys)};height:${proc(16, s.wys)};font-size:${(ROZMIAR_WPISU / s.szer * 100).toFixed(3)}cqw`,
       oninput: e => {
         otwarty.rekord.wartosci[p.id] = e.target.value;
@@ -1211,7 +1265,7 @@ function ustawBlokade(otwarty) {
   $('zapisz-protokol').hidden = zablokowany;
   $('zatwierdz-wniosek').hidden = zablokowany;
   if (zablokowany) {
-    pokazUwage('komunikat', `Wniosek zatwierdzony ${dataCzytelna(otwarty.rekord.zatwierdzono)} – tylko do podglądu.`, { neutralna: true, znak: 'klodka' });
+    pokazUwage('komunikat', `Materiałówka zatwierdzona ${dataCzytelna(otwarty.rekord.zatwierdzono)} – tylko do podglądu.`, { neutralna: true, znak: 'klodka' });
   }
 }
 
@@ -1232,7 +1286,7 @@ function tekstyWniosku(otwarty, zatwierdzono) {
 
 // Pola i rozmiary stron zapisywane w rekordzie (i w PDF) - z nich odczyt
 // pisma działa także po wczytaniu wniosku na innym urządzeniu.
-const polaRekordu = otwarty => otwarty.pola.map(({ id, kolumna, etykieta, jednostka, sekcja, rodzaj, strona, x, y, w }) => ({ id, kolumna, etykieta, jednostka, sekcja, rodzaj, strona, x, y, w }));
+const polaRekordu = otwarty => otwarty.pola.map(({ id, etykieta, material, lp, wydrukowano, sekcja, rodzaj, strona, x, y, w, h }) => ({ id, etykieta, material, lp, wydrukowano, sekcja, rodzaj, strona, x, y, w, h }));
 const rozmiaryStron = otwarty => otwarty.strony.map(s => ({ szer: s.szer, wys: s.wys }));
 
 async function potwierdzZatwierdzenie(otwarty) {
@@ -1248,10 +1302,11 @@ async function potwierdzZatwierdzenie(otwarty) {
       const odczyt = await odczytajPismo(kopia);
       rekord.odczyt = odczyt;
       const odczytane = pozycje.filter(p => p.id in odczyt.wartosci);
+      const zIloscia = pozycje.filter(p => !['', '0'].includes(iloscKoncowa(p, odczyt))).length;
       wstaw(opis, [
-        el('p', {}, odczytane.length ? `Odczytane ilości (${odczytane.length} z ${pozycje.length} pozycji) – porównaj z tym, co napisałeś:` : 'Nie wpisano żadnej ilości.'),
+        el('p', {}, `Do Materiałówki trafi ${zIloscia} pozycji z ilością. ` + (odczytane.length ? `Poprawki rysikiem (${odczytane.length}) – porównaj z tym, co napisałeś:` : 'Bez poprawek rysikiem – ilości z wydruku.')),
         odczytane.length > 0 && el('ul', { class: 'odczyty' }, odczytane.map(p => el('li', { class: odczyt.niepewne.includes(p.id) ? 'niepewny' : '' },
-          el('span', {}, p.etykieta), el('strong', {}, `${odczyt.wartosci[p.id] || '?'}${p.jednostka ? ` ${p.jednostka}` : ''}${odczyt.niepewne.includes(p.id) ? ' – do sprawdzenia' : ''}`))))
+          el('span', {}, p.etykieta), el('strong', {}, `${p.wydrukowano ? `${p.wydrukowano} → ` : ''}${odczyt.wartosci[p.id] || '?'}${odczyt.niepewne.includes(p.id) ? ' – do sprawdzenia' : ''}`))))
       ]);
     } catch (blad) {
       console.warn(blad);
@@ -1276,7 +1331,7 @@ async function zapiszWniosek(otwarty, { zatwierdz = false } = {}) {
   document.activeElement?.blur?.();
   const przyciski = [$('zapisz-protokol'), $('zatwierdz-wniosek')];
   for (const p of przyciski) p.disabled = true;
-  const trwa = toast(zatwierdz ? 'Zatwierdzam wniosek…' : 'Zapisuję wniosek…', { czas: 0 });
+  const trwa = toast(zatwierdz ? 'Zatwierdzam materiałówkę…' : 'Zapisuję materiałówkę…', { czas: 0 });
   const nastepny = { etykieta: 'Następny adres', onclick: () => history.back() };
   try {
     const teraz = new Date().toISOString();
@@ -1285,11 +1340,12 @@ async function zapiszWniosek(otwarty, { zatwierdz = false } = {}) {
     const kreski = otwarty.edytor.kreski;
     const pola = polaRekordu(otwarty);
     const strony = rozmiaryStron(otwarty);
-    const nazwa = nazwaPlikuWniosku(rekord.adres, rekord.instalacja);
+    const nazwa = nazwaPlikuWniosku(rekord.adres, rekord.zestaw);
     const stanDoEdycji = {
       typ: 'wniosek',
       instalacja: rekord.instalacja,
       adres: rekord.adres,
+      zestaw: rekord.zestaw,
       wzor: { klucz: rekord.wzor, nazwa: otwarty.szablon.nazwa, modifiedTime: otwarty.szablon.modifiedTime || null },
       wartosci: rekord.wartosci,
       kreski,
@@ -1326,7 +1382,7 @@ async function zapiszWniosek(otwarty, { zatwierdz = false } = {}) {
     try {
       await wyslijRekord(rekord);
       trwa.remove();
-      toast(`${zatwierdzono ? 'Zatwierdzono' : 'Zapisano'} na Dysku i w tabeli: ${nazwa}`, { typ: 'ok', akcja: nastepny, czas: 8000 });
+      toast(`${zatwierdzono ? 'Zatwierdzono' : 'Zapisano'} na Dysku i w Materiałówce: ${nazwa}`, { typ: 'ok', akcja: nastepny, czas: 8000 });
       if (rekord.uwagaMontazowa) toast(`Daty nie wpisały się do tabeli montażowej: ${rekord.uwagaMontazowa}.`, { typ: 'blad', czas: 15000 });
     } catch (blad) {
       console.error(blad);
@@ -1336,7 +1392,7 @@ async function zapiszWniosek(otwarty, { zatwierdz = false } = {}) {
   } catch (blad) {
     console.error(blad);
     trwa.remove();
-    toast(`Nie udało się zapisać wniosku: ${blad.message}`, { typ: 'blad', czas: 10000 });
+    toast(`Nie udało się zapisać materiałówki: ${blad.message}`, { typ: 'blad', czas: 10000 });
   } finally {
     for (const p of przyciski) p.disabled = false;
   }
@@ -1374,7 +1430,7 @@ async function odczytajPismo(rekord) {
   if (rekord.odczyt?.podpis === podpis) return rekord.odczyt;
   const zPismem = pola.filter(p => p.rodzaj === 'ilosc' && przypisane.has(p.id));
   const doOdczytu = await Promise.all(zPismem.map(async (p, i) => ({
-    nr: i + 1, etykieta: p.etykieta || p.kolumna, jednostka: p.jednostka, obraz: await wycinekPola(p, przypisane.get(p.id), wysokosci[p.strona])
+    nr: i + 1, etykieta: p.etykieta || p.kolumna, jednostka: p.jednostka, wydrukowano: p.wydrukowano, obraz: await wycinekPola(p, przypisane.get(p.id), wysokosci[p.strona])
   })));
   let wyniki = new Map();
   if (doOdczytu.length) {
@@ -1400,64 +1456,88 @@ async function odczytajPismo(rekord) {
   return rekord.odczyt;
 }
 
-// Tabela materiałowa inwestycji (zakładana przy pierwszym wniosku): pozycje
-// wniosku zastępują poprzednie pozycje tego wniosku, w arkuszu Wnioski
-// status i daty.
+// Arkusz „Materiałówka” (w folderze rodzaju albo folderze materiałówek;
+// brak - zakładamy): wiersze adresu zastępują poprzednie. Potem daty
+// w tabeli montażowej - ich błąd nie blokuje materiałówki.
 async function wpiszWniosek(rekord) {
-  const rodzaj = rodzajWniosku(rekord.instalacja);
   const odczyt = await odczytajPismo(rekord);
   await zapiszRekord(rekord);
-  // Ilości tylko z odczytu pisma; pola nagłówka z klawiatury.
-  const naglowek = Object.fromEntries(Object.entries(rekord.wartosci || {}).filter(([id]) => (rekord.pola || []).find(p => p.id === id)?.rodzaj !== 'ilosc'));
+  const inw = await odczytaj('inwestycje', rekord.inwestycja);
+  const rodzaj = rodzajWniosku(rekord.instalacja);
+  const mat = inw.materialowki?.rodzaje?.[rekord.instalacja];
+  if (!mat) throw new Error(`w folderze materiałówek nie ma folderu „${rodzaj}”`);
   try {
-    const id = await tabelaMat.tabelaMaterialowa(google, rekord.inwestycja);
-    await tabelaMat.zapiszPozycje(google, id, {
-      nowe: pozycjeWniosku({ pola: rekord.pola || [], wartosci: { ...naglowek, ...odczyt.wartosci }, niepewne: odczyt.niepewne, adres: rekord.adres, rodzaj, link: rekord.drive?.link, zapisano: rekord.zmieniono, rozpoczeto: rekord.rozpoczeto, zatwierdzono: rekord.zatwierdzono }),
-      czyStary: w => w['Źródło'] === tabelaMat.ZRODLO.wniosek && tabelaMat.kluczWniosku(w.Adres, w.Rodzaj) === tabelaMat.kluczWniosku(rekord.adres, rodzaj)
+    if (!mat.tabela) {
+      mat.tabela = { id: await google.utworzArkuszGoogle(mat.folder, 'Materiałówka'), nazwa: 'Materiałówka' };
+      await zapisz('inwestycje', inw.id, inw);
+      if (stan.inwestycja?.id === inw.id) stan.inwestycja.materialowki = inw.materialowki;
+    }
+    await zapiszMaterialowke(mat.tabela.id, rodzaj, {
+      adres: rekord.adres,
+      nowe: wierszeMaterialowki({ pola: rekord.pola || [], odczyt, adres: rekord.adres, zestaw: bezPdf(rekord.zestaw), zapisano: rekord.zmieniono, zatwierdzono: rekord.zatwierdzono })
     });
-    await tabelaMat.zapiszWniosek(google, id, { adres: rekord.adres, rodzaj, rozpoczeto: rekord.rozpoczeto, zmieniono: rekord.zmieniono, zatwierdzono: rekord.zatwierdzono, link: rekord.drive?.link });
   } catch (blad) {
-    if (blad.status === 403) throw new Error('to konto nie może edytować tabeli materiałowej – biuro musi dać uprawnienia „Edytujący” do folderu inwestycji');
+    if (blad.status === 403) throw new Error('to konto nie może edytować arkusza „Materiałówka” – biuro musi dać uprawnienia „Edytujący”');
     throw blad;
   }
-  // Daty w tabeli montażowej nie blokują wniosku (np. chroniony nagłówek) -
-  // uwaga dla szefa magazynu, ponowna próba przy następnym zapisie.
-  rekord.uwagaMontazowa = await datyWnioskuDoMontazowej(rekord);
-  if (stan.inwestycja?.id === rekord.inwestycja) {
-    stan.statusyWnioskow.set(tabelaMat.kluczWniosku(rekord.adres, rodzaj), { zatwierdzony: Boolean(rekord.zatwierdzono), zatwierdzono: dataCzytelna(rekord.zatwierdzono) });
-  }
+  rekord.uwagaMontazowa = await datyDoMontazowej(rekord);
 }
 
+async function zapiszMaterialowke(id, rodzaj, { adres, nowe }) {
+  let arkusze = await google.arkuszeTabeli(id);
+  let tytul = arkuszMaterialowki(arkusze.map(a => a.title), rodzaj);
+  // Nowy arkusz Google ma pusty „Arkusz1” - zostaje zakładką rodzaju.
+  if (!tytul || (arkusze.length === 1 && /^(sheet|arkusz)\s*1$/i.test(tytul))) {
+    const domyslny = arkusze.length === 1 && /^(sheet|arkusz)\s*1$/i.test(arkusze[0].title);
+    await google.zmianyTabeli(id, [domyslny
+      ? { updateSheetProperties: { properties: { sheetId: arkusze[0].sheetId, title: rodzaj }, fields: 'title' } }
+      : { addSheet: { properties: { title: rodzaj } } }]);
+    arkusze = await google.arkuszeTabeli(id);
+    tytul = rodzaj;
+  }
+  const arkusz = arkusze.find(a => a.title === tytul);
+  const wiersze = await google.wartosciArkusza(id, tytul);
+  const z = zmianyMaterialowki({ arkusz: tytul, wiersze, nowe, adres });
+  const siatka = [];
+  const { rowCount, columnCount } = arkusz.gridProperties;
+  if (z.szerokosc > columnCount) siatka.push({ appendDimension: { sheetId: arkusz.sheetId, dimension: 'COLUMNS', length: z.szerokosc - columnCount } });
+  const wierszy = z.dopisz.wiersz + z.dopisz.wartosci.length;
+  if (wierszy > rowCount) siatka.push({ appendDimension: { sheetId: arkusz.sheetId, dimension: 'ROWS', length: wierszy - rowCount + 500 } });
+  if (siatka.length) await google.zmianyTabeli(id, siatka);
+  const dane = [...z.dane];
+  if (z.dopisz.wartosci.length) dane.push({ range: zakres(tytul, 0, z.dopisz.wiersz), values: z.dopisz.wartosci });
+  if (dane.length) await google.zapiszKomorki(id, dane);
+  // Stare wiersze adresu usuwane po dopisaniu nowych - przerwany zapis nie gubi danych.
+  const bloki = blokiDoUsuniecia(z.doUsuniecia);
+  if (bloki.length) await google.zmianyTabeli(id, bloki.map(b => ({ deleteDimension: { range: { sheetId: arkusz.sheetId, dimension: 'ROWS', startIndex: b.start, endIndex: b.koniec } } })));
+}
 
-// Data zapisu i zatwierdzenia wniosku w wierszu adresu w tabeli montażowej.
-// Zwraca opis problemu dla szefa magazynu albo null, gdy wszystko wpisane.
-async function datyWnioskuDoMontazowej(rekord) {
+// Data zapisu (kolumna „…wydania…”) i zatwierdzenia („…zakończenia…”) w wierszu
+// adresu w tabeli montażowej. Zwraca opis problemu albo null.
+async function datyDoMontazowej(rekord) {
   const { tabela } = await odczytaj('inwestycje', rekord.inwestycja);
+  rekord.zatwierdzenieWTabeli = false;
   if (tabela.mimeType !== google.MIME.arkusz) return TYLKO_ARKUSZ_GOOGLE;
-  const kolumny = `„${KOLUMNY_MONTAZOWE.zapisano}” i „${KOLUMNY_MONTAZOWE.zatwierdzono}”`;
   const problemy = [];
-  let siatki = null;
+  let zatwierdzenieWpisane = Boolean(rekord.zatwierdzono && rekord.wiersze?.length);
   for (const cel of rekord.wiersze || []) {
     try {
       const wiersze = await google.wartosciArkusza(tabela.id, cel.arkusz);
       const nrWiersza = znajdzWiersz(wiersze, cel);
-      if (!nrWiersza) { problemy.push(`nie ma wiersza „${cel.adres}” w arkuszu ${cel.arkusz}`); continue; }
-      const { dane, szerokosc } = datyWnioskuWWierszu({ arkusz: cel.arkusz, wiersze, nrWiersza, zapisano: rekord.zmieniono, zatwierdzono: rekord.zatwierdzono });
-      if (!dane.length) continue;
-      siatki ||= await google.arkuszeTabeli(tabela.id);
-      const s = siatki.find(x => x.title === cel.arkusz);
-      if (s && szerokosc > s.gridProperties.columnCount) {
-        await google.zmianyTabeli(tabela.id, [{ appendDimension: { sheetId: s.sheetId, dimension: 'COLUMNS', length: szerokosc - s.gridProperties.columnCount } }]);
-        s.gridProperties.columnCount = szerokosc;
-      }
-      await google.zapiszKomorki(tabela.id, dane);
+      if (!nrWiersza) { problemy.push(`nie ma wiersza „${cel.adres}” w arkuszu ${cel.arkusz}`); zatwierdzenieWpisane = false; continue; }
+      const { dane, brak } = datyWMontazowej({ arkusz: cel.arkusz, wiersze, nrWiersza, zapisano: rekord.zmieniono, zatwierdzono: rekord.zatwierdzono });
+      problemy.push(...brak);
+      if (brak.some(b => /zakończenia/.test(b))) zatwierdzenieWpisane = false;
+      if (dane.length) await google.zapiszKomorki(tabela.id, dane, 'USER_ENTERED');
     } catch (blad) {
       console.warn(blad);
-      if (/chronion|protected/i.test(blad.message)) problemy.push(`nagłówek arkusza ${cel.arkusz} jest chroniony – właściciel tabeli musi raz dopisać w nagłówku kolumny ${kolumny}`);
+      zatwierdzenieWpisane = false;
+      if (/chronion|protected/i.test(blad.message)) problemy.push(`kolumny dat w arkuszu ${cel.arkusz} są chronione – właściciel tabeli musi dać temu kontu prawo ich edycji`);
       else if (blad.status === 403) problemy.push('to konto nie może edytować tabeli montażowej – biuro musi dać uprawnienia „Edytujący”');
       else problemy.push(blad.message);
     }
   }
+  rekord.zatwierdzenieWTabeli = zatwierdzenieWpisane;
   return problemy.length ? [...new Set(problemy)].join('; ') : null;
 }
 

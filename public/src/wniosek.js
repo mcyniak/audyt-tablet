@@ -1,49 +1,30 @@
-// Wniosek materiałowy: pola wzoru PDF, wartości wpisywane z klawiatury,
-// zapis do tabeli materiałowej inwestycji (src/tabela-materialowa.js).
+// Materiałówka (wniosek materiałowy): PDF zestawu z folderu
+//   <inwestycja> / <…Materiałówki> / <PC|PV> / set 9012.pdf
+// wypełniany rysikiem na tablecie. Zestaw to gotowa lista pozycji (l.p.,
+// Nazwa, Materiał, ilość) - część ilości jest już wydrukowana. Magazynier
+// zostawia je, skreśla albo poprawia rysikiem; puste dopisuje rysikiem.
+// Pismo w kolumnie ilości odczytuje Claude (src/odczyt-pisma.js).
 //
-// Pola nie są zapisane w kodzie. Bierzemy je z samego wzoru: każdy ciąg
-// podkreśleń "____" to pole do wpisania, a nazwą pola (i kolumną w arkuszu)
-// jest tekst przed nim w tym samym wierszu. Nowa pozycja we wzorze oznacza
-// nową pozycję w tabeli, bez zmian w aplikacji. Wszystko inne na wzorze
-// (np. "Uwagi: ......", podpis) wypełnia się rysikiem.
+// Zapis: PDF do folderu adresu obok zestawów, wiersze (adres, towar, liczba,
+// daty) do arkusza „Materiałówka”, data zapisu i zatwierdzenia do kolumn
+// „…wydania…” i „…zakończenia…” w wierszu adresu w tabeli montażowej.
 //
 // Moduł bez zależności od przeglądarki, więc testy w Node też go używają.
-import { normalizuj, znajdzNaglowek } from './tabela.js';
-import { ZRODLO, STATUS, wartoscKomorki, dataCzytelna } from './tabela-materialowa.js';
+import { normalizuj, znajdzNaglowek, kluczAdresu } from './tabela.js';
+import { wartoscKomorki, dataCzytelna, zakres, blokiDoUsuniecia } from './tabela-materialowa.js';
 
-export { dataCzytelna };
+export { dataCzytelna, blokiDoUsuniecia };
 
-const PODKRESLENIA = /_{4,}/g;
-const JEDNOSTKA = /^(szt|kpl|kompl|m|mb|m2|m²|m3|m³|kg|g|l|op|opak|rolka|rolki|para|pary|komplet|szt\/kpl)\.?$/i;
+// Folder materiałówek w inwestycji („8. Materiałówki ”), arkusz „Materiałówka”.
+export const MATERIALOWKI = /materia[lł][oó]wk/i;
+
+// --- pola zestawu ------------------------------------------------------------
+
 const LP = /^\d{1,3}[.)]?$/;
-
-// Przybliżona szerokość znaku (w em) - potrzebna, gdy etykieta i
-// podkreślenia są w jednym kawałku tekstu: "Adres: ________".
-function szerokoscZnaku(z) {
-  if (z === '_') return 0.5;
-  if (z === ' ') return 0.23;
-  if ('.,:;\'|!'.includes(z)) return 0.25;
-  if (/[0-9]/.test(z)) return 0.5;
-  if (/[A-ZĄĆĘŁŃÓŚŹŻ]/.test(z)) return 0.62;
-  return 0.48;
-}
-const szerokosc = t => [...t].reduce((s, z) => s + szerokoscZnaku(z), 0);
-
-// Kawałki tekstu jednego elementu pdf.js: zwykły tekst i pola (podkreślenia),
-// każdy z przybliżonym x i szerokością.
-function kawalki(el) {
-  const calosc = szerokosc(el.tekst) || 1;
-  const xOd = i => el.x + el.w * szerokosc(el.tekst.slice(0, i)) / calosc;
-  const wynik = [];
-  let od = 0;
-  for (const m of el.tekst.matchAll(PODKRESLENIA)) {
-    if (m.index > od) wynik.push({ pole: false, tekst: el.tekst.slice(od, m.index), x: xOd(od), x1: xOd(m.index) });
-    wynik.push({ pole: true, x: xOd(m.index), x1: xOd(m.index + m[0].length) });
-    od = m.index + m[0].length;
-  }
-  if (od < el.tekst.length) wynik.push({ pole: false, tekst: el.tekst.slice(od), x: xOd(od), x1: el.x + el.w });
-  return wynik;
-}
+// Wydrukowana ilość: "5", "2,5", "80 l".
+const ILOSC = /^\d+([.,]\d+)?(\s*[a-ząćęłńóśźż.]{1,4})?$/i;
+// Wiersze tabeli są co ~9,5 pt; bliżej to dalszy ciąg tej samej pozycji.
+const CIAG_DALSZY = 7;
 
 // Linie strony: elementy o tej samej linii bazowej (±2 pt), od góry strony.
 function linie(elementy) {
@@ -58,141 +39,256 @@ function linie(elementy) {
   return wynik;
 }
 
-// Rodzaj pola decyduje o klawiaturze i o tym, co wpisujemy z góry.
-function rodzajPola(etykieta, jednostka) {
-  const n = normalizuj(etykieta);
-  if (/^adres/.test(n)) return 'adres';
-  if (/^inwestycj/.test(n)) return 'inwestycja';
-  if (/^data\b/.test(n)) return 'data';
-  if (/nazwisk|klient|wlasciciel/.test(n)) return 'nazwisko';
-  if (jednostka) return 'ilosc';
-  // "Ekipa:", "Kierowca:" - pole formularza z tekstem; pozycja tabeli bez
-  // dwukropka ("Falownik ____") to ilość.
-  return /:\s*$/.test(etykieta) || /ekip|uwag|podpis|osob|kierowc|samoch|telefon|gmina|nr\b/.test(n) ? 'tekst' : 'ilosc';
-}
-
 const czysc = t => t.replace(/\s+/g, ' ').trim();
+const mediana = l => { const s = [...l].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : null; };
 
-// Nagłówek sekcji tabeli: linia bez pól, cała wielkimi literami ("KONSTRUKCJA").
-const SEKCJA = /^[^a-ząćęłńóśźż]*[A-ZĄĆĘŁŃÓŚŹŻ]{3}[^a-ząćęłńóśźż]*$/;
-
-// strony: wynik tekstSzablonu (y linii bazowej od dołu strony).
-// Wynik: [{ id, etykieta, jednostka, rodzaj, kolumna, sekcja, strona, x, y, w }].
-export function polaWzoru(strony) {
-  const pola = [];
-  let sekcja = { tekst: '', nr: 0 };
+/**
+ * Pola zestawu z tekstu PDF (wynik tekstSzablonu; y linii bazowej od dołu strony).
+ * Pozycje: { id, rodzaj: 'ilosc', etykieta, material, lp, wydrukowano, sekcja, strona, x, y, w, h }
+ *   x/w - kolumna ilości (pismo), y - tak, by środek wiersza wypadał w wys - y - 5
+ *   (jak w src/odczyt-pisma.js), h - wysokość wiersza.
+ * Nagłówek: { id: 'ekipa' | 'data' | 'adres', rodzaj: 'tekst' | 'data' | 'adres', ... }.
+ */
+export function polaZestawu(strony) {
+  const wiersze = [];
+  const naglowki = [];
+  let sekcja = 0;
+  let pierwszyNaglowekTabeli = null;
+  // Tabela przechodzi na kolejne strony bez powtórzonego nagłówka.
+  let tabela = null;
   strony.forEach((strona, s) => {
+    let poprzedni = null;
     for (const linia of linie(strona.elementy)) {
-      const tekstLinii = czysc(linia.elementy.map(e => e.tekst).join(' '));
-      if (!/_{4,}/.test(tekstLinii) && SEKCJA.test(tekstLinii)) { sekcja = { tekst: tekstLinii, nr: sekcja.nr + 1 }; continue; }
-      const czesci = linia.elementy.flatMap(e => kawalki(e).map(k => ({ ...k, y: e.y })));
-      let teksty = [];
-      let ostatnie = null; // pole przed tym tekstem - jednostka może stać ZA polem ("____ szt.")
-      for (const c of czesci) {
-        if (!c.pole) {
-          const t = czysc(c.tekst);
-          if (!t) continue;
-          if (ostatnie && !ostatnie.jednostka && !teksty.length && JEDNOSTKA.test(t)) { ostatnie.jednostka = t; continue; }
-          teksty.push(t);
-          continue;
-        }
-        // Lp. z początku wiersza tabeli nie jest częścią nazwy.
-        const bezLp = teksty.filter((t, i) => !(i === 0 && LP.test(t)));
-        let jednostka = '';
-        if (bezLp.length > 1 && JEDNOSTKA.test(bezLp.at(-1))) jednostka = bezLp.pop();
-        const pole = { etykieta: czysc(bezLp.join(' ')), jednostka, sekcja, strona: s, x: c.x, y: c.y, w: c.x1 - c.x };
-        pola.push(pole);
-        ostatnie = pole;
-        teksty = [];
+      const nazwy = linia.elementy.map(e => normalizuj(e.tekst));
+      const iNazwa = nazwy.indexOf('nazwa');
+      if (iNazwa !== -1) {
+        const material = linia.elementy.find(e => /^materia/.test(normalizuj(e.tekst)));
+        tabela = { xNazwa: linia.elementy[iNazwa].x, xMaterial: material?.x ?? null };
+        sekcja += 1;
+        poprzedni = null;
+        pierwszyNaglowekTabeli ??= { strona: s, y: linia.y };
+        continue;
       }
+      if (!tabela) {
+        if (s === 0) naglowki.push(linia);
+        continue;
+      }
+      if (nazwy.some(n => /^podpis/.test(n))) { tabela = null; continue; }
+      const czesc = { lp: '', nazwa: [], material: null, ilosc: null };
+      for (const e of linia.elementy) {
+        const t = czysc(e.tekst);
+        if (e.x < tabela.xNazwa - 3) { if (LP.test(t)) czesc.lp = t.replace(/[.)]$/, ''); continue; }
+        if (tabela.xMaterial !== null && e.x > tabela.xMaterial + 20 && ILOSC.test(t)) { czesc.ilosc = e; continue; }
+        if (tabela.xMaterial !== null && e.x >= tabela.xMaterial - 15) { czesc.material = e; continue; }
+        if (tabela.xMaterial === null && e.x > tabela.xNazwa + 150 && ILOSC.test(t)) { czesc.ilosc = e; continue; }
+        czesc.nazwa.push(t);
+      }
+      if (poprzedni && poprzedni.ys.at(-1) - linia.y < CIAG_DALSZY) {
+        poprzedni.ys.push(linia.y);
+        poprzedni.nazwa.push(...czesc.nazwa);
+        poprzedni.lp ||= czesc.lp;
+        poprzedni.material ||= czesc.material;
+        poprzedni.ilosc ||= czesc.ilosc;
+        continue;
+      }
+      poprzedni = { strona: s, sekcja, ys: [linia.y], ...czesc };
+      wiersze.push(poprzedni);
     }
   });
 
-  const uzyte = new Map();
-  // Tytuł wzoru też jest wielkimi literami - sekcja liczy się dopiero, gdy
-  // między nią a pozycją nie było pól nagłówka ("Data: ____").
-  let poNaglowku = -1;
-  return pola.map((p, i) => {
-    const etykieta = p.etykieta.replace(/:\s*$/, '') || `Pole ${i + 1}`;
-    const rodzaj = rodzajPola(p.etykieta, p.jednostka);
-    if (rodzaj !== 'ilosc') poNaglowku = p.sekcja.nr;
-    const sekcja = rodzaj === 'ilosc' && p.sekcja.nr > poNaglowku ? p.sekcja.tekst : '';
-    const kolumna = p.jednostka ? `${etykieta} [${p.jednostka}]` : etykieta;
-    const baza = normalizuj(kolumna) || `pole ${i + 1}`;
-    const nr = (uzyte.get(baza) || 0) + 1;
-    uzyte.set(baza, nr);
-    return { ...p, etykieta, rodzaj, sekcja, id: nr > 1 ? `${baza} ${nr}` : baza, kolumna: nr > 1 ? `${kolumna} (${nr})` : kolumna };
-  });
+  // Kolumna ilości: od prawej krawędzi kolumny Materiał do lustrzanego odbicia
+  // względem środka wydrukowanych ilości (brak ramek tabeli w tekście PDF).
+  const prawyMaterial = Math.max(...wiersze.filter(w => w.material).map(w => w.material.x + w.material.w));
+  const srodekIlosci = mediana(wiersze.filter(w => w.ilosc).map(w => w.ilosc.x + w.ilosc.w / 2));
+  const lewaIlosci = Math.min(...wiersze.filter(w => w.ilosc).map(w => w.ilosc.x));
+  // Granica kolumn: w połowie między najdłuższym materiałem a wydrukowaną ilością.
+  const x0 = Number.isFinite(prawyMaterial)
+    ? (lewaIlosci > prawyMaterial ? (prawyMaterial + lewaIlosci) / 2 : prawyMaterial + 3)
+    : (srodekIlosci ?? 420) - 30;
+  const x1 = srodekIlosci !== null && srodekIlosci > x0 + 5 ? Math.max(2 * srodekIlosci - x0, srodekIlosci + 35) : x0 + 60;
+
+  const pozycje = wiersze
+    .map(w => ({ ...w, nazwa: czysc(w.nazwa.join(' ')) }))
+    .filter(w => /[a-ząćęłńóśźż0-9]/i.test(w.nazwa.replace(/[.…]/g, '')))
+    .map((w, i) => {
+      const yLinii = w.ys.reduce((a, b) => a + b, 0) / w.ys.length;
+      return {
+        id: `poz-${i + 1}`,
+        rodzaj: 'ilosc',
+        etykieta: w.nazwa,
+        material: w.material ? czysc(w.material.tekst) : '',
+        lp: w.lp,
+        wydrukowano: w.ilosc ? czysc(w.ilosc.tekst) : '',
+        sekcja: w.sekcja,
+        strona: w.strona,
+        x: x0,
+        y: yLinii - 2,
+        w: x1 - x0,
+        h: 9.5 + (w.ys.length - 1) * 5
+      };
+    });
+
+  // Nagłówek zestawu (nad pierwszą tabelą na 1. stronie): Ekipa, Data, Adres.
+  const elementyNaglowka = naglowki.flatMap(l => l.elementy);
+  const etykieta = wzor => elementyNaglowka.find(e => wzor.test(normalizuj(e.tekst)));
+  const ekipa = etykieta(/^ekipa/);
+  const data = etykieta(/^data\b/);
+  const adres = etykieta(/^adres/);
+  const kolumnaMaterialu = Number.isFinite(prawyMaterial) ? prawyMaterial : x0;
+  const pola = [];
+  if (ekipa) {
+    const x = ekipa.x + ekipa.w + 4;
+    const koniec = data && Math.abs(data.y - ekipa.y) < 3 && data.x > x ? data.x - 10 : kolumnaMaterialu - 50;
+    pola.push({ id: 'ekipa', rodzaj: 'tekst', etykieta: 'Ekipa', strona: 0, x, y: ekipa.y, w: Math.max(koniec - x, 40) });
+  }
+  if (data) {
+    const x = Math.max(data.x + data.w + 4, x0);
+    pola.push({ id: 'data', rodzaj: 'data', etykieta: 'Data', strona: 0, x, y: data.y, w: Math.max(x1 - x, 50) });
+  }
+  if (adres) {
+    const x = adres.x + adres.w + 8;
+    pola.push({ id: 'adres', rodzaj: 'adres', etykieta: 'Adres montażu', strona: 0, x, y: adres.y, w: Math.max(kolumnaMaterialu - 60 - x, 60) });
+  }
+  return [...pola, ...pozycje];
 }
 
-// Wartości wpisane z góry: adres i nazwisko z tabeli, nazwa inwestycji, data.
-export function wartosciPoczatkowe(pola, { adres, nazwisko, inwestycja, data }) {
-  const z = { adres, nazwisko, inwestycja, data };
+// Wartości wpisane z góry: adres z tabeli montażowej i dzisiejsza data.
+export function wartosciPoczatkowe(pola, { adres, data }) {
+  const z = { adres, data };
   return Object.fromEntries(pola.filter(p => z[p.rodzaj]).map(p => [p.id, z[p.rodzaj]]));
 }
 
-// Wiersze arkusza Pozycje tabeli materiałowej: jeden na wpisaną ilość.
-// Data i ekipa z nagłówka wniosku idą do swoich kolumn przy każdej pozycji,
-// inne pola tekstowe wzoru (np. "Kierowca") - do kolumn o swojej nazwie.
-// pola: zapisane w rekordzie ({ id, kolumna, etykieta, jednostka, sekcja, rodzaj }).
-// niepewne: id pól, których odczyt pisma trzeba sprawdzić.
-export function pozycjeWniosku({ pola, wartosci, adres, rodzaj, link, zapisano, rozpoczeto, zatwierdzono, niepewne = [] }) {
-  const wartosc = p => String(wartosci?.[p.id] ?? '').trim();
-  const wspolne = { Adres: adres, Rodzaj: rodzaj, 'Źródło': ZRODLO.wniosek };
-  for (const p of pola) {
-    const v = wartosc(p);
-    if (!v || p.rodzaj === 'ilosc' || ['adres', 'inwestycja', 'nazwisko'].includes(p.rodzaj)) continue;
-    const n = normalizuj(p.etykieta || p.kolumna);
-    const klucz = p.rodzaj === 'data' ? 'Data' : /^ekip/.test(n) ? 'Ekipa' : /^moc\b/.test(n) ? 'Moc' : /^uwag/.test(n) ? 'Uwagi' : p.kolumna;
-    wspolne[klucz] ??= v;
-  }
-  // Wzór bez pola „Data” - data rozpoczęcia wniosku.
-  wspolne.Data ??= dataCzytelna(rozpoczeto || zapisano).slice(0, 10);
-  return pola.filter(p => p.rodzaj === 'ilosc' && wartosc(p)).map(p => ({
-    ...wspolne,
-    Sekcja: p.sekcja || '',
-    Pozycja: p.etykieta ?? p.kolumna,
-    'Jedn.': p.jednostka || '',
-    'Ilość': wartoscKomorki(wartosc(p)),
-    Status: zatwierdzono ? STATUS.zatwierdzony : STATUS.wTrakcie,
-    'Rozpoczęto': dataCzytelna(rozpoczeto),
-    Zatwierdzono: dataCzytelna(zatwierdzono),
-    'Do sprawdzenia': niepewne.includes(p.id) ? 'tak' : '',
-    Plik: link || '',
-    Zapisano: dataCzytelna(zapisano)
-  }));
+// Ilość pozycji po zapisie: odczyt pisma z jej pola albo ilość z wydruku.
+export function iloscKoncowa(pole, odczyt) {
+  const w = odczyt?.wartosci || {};
+  return pole.id in w ? String(w[pole.id] ?? '').trim() : (pole.wydrukowano || '');
 }
 
-// --- Daty wniosku w tabeli montażowej (wiersz adresu) ---
-//
-// Dwie kolumny, szukane po nagłówku (biuro może je przesunąć albo lekko
-// przemianować, byle zostało „wniosek” i „zapis”/„zatwierdz”); brakujące
-// dopisujemy w wierszu nagłówka za ostatnią zajętą kolumną arkusza.
+// --- arkusz „Materiałówka” ------------------------------------------------------
 
-export const KOLUMNY_MONTAZOWE = { zapisano: 'Wniosek materiałowy - zapisano', zatwierdzono: 'Wniosek materiałowy - zatwierdzono' };
-const PASUJE_MONTAZOWA = { zapisano: /wniosek.*zapis/, zatwierdzono: /wniosek.*zatwierdz/ };
+export const KOLUMNY_MATERIALOWKI = ['adres', 'towar', 'liczba', 'zestaw', 'data zapisania', 'data zatwierdzenia', 'do sprawdzenia'];
 
 /**
- * wiersze: świeżo pobrany arkusz, nrWiersza: wiersz adresu (od 1).
- * @returns {{ dane: {range, values}[], szerokosc: number }}
+ * Wiersze materiałówki: jeden na pozycję z ilością (skreślone do zera pomijamy).
+ * pola: zapisane w rekordzie, odczyt: { wartosci, niepewne } z odczytu pisma.
  */
-export function datyWnioskuWWierszu({ arkusz, wiersze, nrWiersza, zapisano, zatwierdzono }) {
-  const naglowek = znajdzNaglowek(wiersze);
-  if (!naglowek) return { dane: [], szerokosc: 0 };
-  const komorka = (k, w) => `'${arkusz.replace(/'/g, "''")}'!${kolumnaA1(k)}${w}`;
-  const nazwy = (wiersze[naglowek.wiersz] || []).map(normalizuj);
-  let szerokosc = Math.max(0, ...wiersze.map(w => w?.length || 0));
+export function wierszeMaterialowki({ pola, odczyt, adres, zestaw, zapisano, zatwierdzono }) {
+  const niepewne = odczyt?.niepewne || [];
+  return pola.filter(p => p.rodzaj === 'ilosc').flatMap(p => {
+    const ilosc = iloscKoncowa(p, odczyt);
+    const liczba = wartoscKomorki(ilosc);
+    if (ilosc === '' || liczba === 0) return [];
+    return [{
+      adres,
+      towar: p.etykieta,
+      liczba,
+      zestaw: zestaw || '',
+      'data zapisania': dataCzytelna(zapisano),
+      'data zatwierdzenia': dataCzytelna(zatwierdzono),
+      'do sprawdzenia': niepewne.includes(p.id) ? 'tak' : ''
+    }];
+  });
+}
+
+/**
+ * Zastąpienie wierszy adresu w arkuszu materiałówki: nowe na końcu, stare
+ * (ten sam adres) do usunięcia. Kolumny po nagłówku (1. wiersz), brakujące
+ * dopisywane na końcu nagłówka.
+ * @returns {{ dane, dopisz: {wiersz, wartosci}, doUsuniecia: number[], szerokosc }}
+ */
+export function zmianyMaterialowki({ arkusz, wiersze, nowe, adres }) {
+  const kolumny = [...(wiersze[0] || [])].map(k => String(k ?? ''));
   const dane = [];
-  for (const [klucz, wartosc] of [['zapisano', zapisano], ['zatwierdzono', zatwierdzono]]) {
-    let k = nazwy.findIndex(n => PASUJE_MONTAZOWA[klucz].test(n));
-    if (k === -1) {
-      k = szerokosc++;
-      dane.push({ range: komorka(k, naglowek.wiersz + 1), values: [[KOLUMNY_MONTAZOWE[klucz]]] });
+  const indeks = nazwa => {
+    const n = normalizuj(nazwa);
+    let i = kolumny.findIndex(k => normalizuj(k) === n);
+    if (i === -1) {
+      i = kolumny.length;
+      kolumny.push(nazwa);
+      dane.push({ range: zakres(arkusz, i, 1), values: [[nazwa]] });
     }
-    const tekst = dataCzytelna(wartosc);
-    if (String(wiersze[nrWiersza - 1]?.[k] ?? '') !== tekst) dane.push({ range: komorka(k, nrWiersza), values: [[tekst]] });
+    return i;
+  };
+  KOLUMNY_MATERIALOWKI.forEach(indeks);
+  const iAdres = indeks('adres');
+  const klucz = kluczAdresu(adres);
+  const doUsuniecia = [];
+  wiersze.forEach((w, i) => { if (i > 0 && String(w?.[iAdres] ?? '').trim() && kluczAdresu(w[iAdres]) === klucz) doUsuniecia.push(i); });
+  const wartosci = nowe.map(obiekt => {
+    const w = new Array(kolumny.length).fill('');
+    for (const [k, v] of Object.entries(obiekt)) w[indeks(k)] = v ?? '';
+    return w;
+  });
+  return { dane, dopisz: { wiersz: Math.max(wiersze.length, 1) + 1, wartosci }, doUsuniecia, szerokosc: kolumny.length };
+}
+
+// Arkusz materiałówki dla rodzaju instalacji: zakładka „PC”/„PV”, a gdy jest
+// tylko jedna zakładka - ta jedna.
+export function arkuszMaterialowki(tytuly, rodzaj) {
+  const n = normalizuj(rodzaj);
+  return tytuly.find(t => normalizuj(t) === n) || (tytuly.length === 1 ? tytuly[0] : null);
+}
+
+// --- tabela montażowa ----------------------------------------------------------------
+
+// Kolumny dat w wierszu adresu: „data wydania materiału” / „wydania zestawu”
+// (zapis) i „Data zakończenia montażu” (zatwierdzenie).
+const KOLUMNA_ZAPISU = /wydani/;
+const KOLUMNA_ZATWIERDZENIA = /zakonczeni/;
+
+function kolumnyDat(wiersze) {
+  const naglowek = znajdzNaglowek(wiersze);
+  if (!naglowek) return null;
+  const nazwy = (wiersze[naglowek.wiersz] || []).map(normalizuj);
+  return { zapis: nazwy.findIndex(n => KOLUMNA_ZAPISU.test(n)), zatwierdzenie: nazwy.findIndex(n => KOLUMNA_ZATWIERDZENIA.test(n)), nazwy: wiersze[naglowek.wiersz] };
+}
+
+// Data do komórki arkusza (USER_ENTERED) - ISO, rozumiana w każdym ustawieniu regionalnym.
+const dataArkusza = iso => {
+  const d = new Date(iso);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+
+/**
+ * Komórki dat w wierszu adresu. Data zatwierdzenia tylko wpisywana, nigdy
+ * czyszczona (kolumnę zakończenia montażu może uzupełniać też biuro).
+ * @returns {{ dane: {range, values}[], brak: string[] }} brak - opisy brakujących kolumn
+ */
+export function datyWMontazowej({ arkusz, wiersze, nrWiersza, zapisano, zatwierdzono }) {
+  const k = kolumnyDat(wiersze);
+  const komorka = (kol, w) => `'${arkusz.replace(/'/g, "''")}'!${kolumnaA1(kol)}${w}`;
+  if (!k) return { dane: [], brak: [`arkusz ${arkusz} nie ma nagłówka z kolumną „Adres”`] };
+  const dane = [];
+  const brak = [];
+  if (k.zapis === -1) brak.push(`w arkuszu ${arkusz} nie ma kolumny „data wydania…”`);
+  else if (zapisano) dane.push({ range: komorka(k.zapis, nrWiersza), values: [[dataArkusza(zapisano)]] });
+  if (zatwierdzono) {
+    if (k.zatwierdzenie === -1) brak.push(`w arkuszu ${arkusz} nie ma kolumny „data zakończenia…”`);
+    else dane.push({ range: komorka(k.zatwierdzenie, nrWiersza), values: [[dataArkusza(zatwierdzono)]] });
   }
-  return { dane, szerokosc };
+  return { dane, brak };
+}
+
+// Stan materiałówki z wiersza adresu: { wydano, zakonczono, maKolumneZatwierdzenia }
+// (surowe wartości komórek).
+export function datyZMontazowej(wiersze, nrWiersza) {
+  const k = kolumnyDat(wiersze);
+  const w = wiersze[nrWiersza - 1] || [];
+  const wartosc = i => (i === -1 || !k ? '' : String(w[i] ?? '').trim());
+  return { wydano: wartosc(k?.zapis ?? -1), zakonczono: wartosc(k?.zatwierdzenie ?? -1), maKolumneZatwierdzenia: Boolean(k && k.zatwierdzenie !== -1) };
+}
+
+// Wartość komórki daty (liczba seryjna Arkuszy albo tekst) do wyświetlenia.
+export function dataZKomorki(v) {
+  if (v === '' || v === null || v === undefined) return '';
+  const n = Number(v);
+  if (Number.isFinite(n) && n > 20000 && n < 80000) {
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(n * 86400000));
+    const p = x => String(x).padStart(2, '0');
+    return `${p(d.getUTCDate())}.${p(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`;
+  }
+  return String(v);
 }
 
 function kolumnaA1(i) {
@@ -201,19 +297,30 @@ function kolumnaA1(i) {
   return s;
 }
 
+// Podpowiedź zestawu z tabeli montażowej: numer z nazwy pliku („set 9012”)
+// w którejś komórce wiersza adresu („VPM9012”). Tylko jednoznaczne trafienie.
+export function podpowiedzZestawu(zestawy, wierszeAdresu) {
+  const komorki = wierszeAdresu.flat().map(v => String(v ?? ''));
+  const trafione = zestawy.filter(z => (z.nazwa.match(/\d{3,}/g) || []).some(nr => {
+    const wzor = new RegExp(`(^|\\D)${nr}(\\D|$)`);
+    return komorki.some(k => wzor.test(k));
+  }));
+  return trafione.length === 1 ? trafione[0] : null;
+}
+
 // --- Stan do edycji zapisany w samym PDF ---
 //
-// PDF na Dysku ma wpisane ilości i pismo wtopione w stronę. Żeby dało się go
-// poprawić na dowolnym urządzeniu, w środku jest załącznik z wartościami,
-// kreskami i czystym wzorem. Przeglądarki PDF pokazują normalnie sam wniosek.
+// PDF na Dysku ma pismo wtopione w stronę. Żeby dało się go poprawić na
+// dowolnym urządzeniu, w środku jest załącznik z wartościami, kreskami
+// i czystym wzorem. Przeglądarki PDF pokazują normalnie sam wniosek.
 
 export const ZALACZNIK_STANU = 'wniosek-stan.json';
 export const ZALACZNIK_WZORU = 'wniosek-wzor.pdf';
 
 export function zalacznikiStanu(stan, wzorBajty) {
   return [
-    { nazwa: ZALACZNIK_STANU, bajty: new TextEncoder().encode(JSON.stringify({ wersja: 1, ...stan })), mimeType: 'application/json', opis: 'Dane do edycji wniosku w aplikacji Audyt' },
-    { nazwa: ZALACZNIK_WZORU, bajty: new Uint8Array(wzorBajty), mimeType: 'application/pdf', opis: 'Czysty wzór wniosku' }
+    { nazwa: ZALACZNIK_STANU, bajty: new TextEncoder().encode(JSON.stringify({ wersja: 2, ...stan })), mimeType: 'application/json', opis: 'Dane do edycji materiałówki w aplikacji Audyt' },
+    { nazwa: ZALACZNIK_WZORU, bajty: new Uint8Array(wzorBajty), mimeType: 'application/pdf', opis: 'Czysty zestaw' }
   ];
 }
 
