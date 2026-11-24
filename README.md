@@ -133,7 +133,7 @@ bez „Wszystkie”) → adres. Pod jednym adresem PV i PC to dwa osobne wnioski
 - **„Tabela materiałowa”** (Arkusz Google w folderze inwestycji, zakładany przy
   pierwszym zapisie; ten sam zapisuje aplikacja Listy materiałowe):
   - *Pozycje* – wiersz na wpisaną ilość: Adres, Rodzaj, Źródło, Sekcja, Pozycja,
-    Jedn., Ilość, …, Data, Ekipa, Do sprawdzenia, Plik (link do PDF), Zapisano. Poprawiony
+    Jedn., Ilość, …, Data, Ekipa, Status, Rozpoczęto, Zatwierdzono, Do sprawdzenia, Plik (link do PDF), Zapisano. Poprawiony
     wniosek zastępuje swoje poprzednie wiersze (nowe dopisywane, stare usuwane).
     Inne pola tekstowe wzoru („Kierowca:”) dostają własną kolumnę na końcu.
   - *Wnioski* – Adres, Rodzaj, Status, Rozpoczęto, Ostatnia zmiana, Zatwierdzono, PDF.

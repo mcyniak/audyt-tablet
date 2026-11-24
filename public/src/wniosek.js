@@ -9,7 +9,7 @@
 //
 // Moduł bez zależności od przeglądarki, więc testy w Node też go używają.
 import { normalizuj } from './tabela.js';
-import { ZRODLO, wartoscKomorki, dataCzytelna } from './tabela-materialowa.js';
+import { ZRODLO, STATUS, wartoscKomorki, dataCzytelna } from './tabela-materialowa.js';
 
 export { dataCzytelna };
 
@@ -136,7 +136,7 @@ export function wartosciPoczatkowe(pola, { adres, nazwisko, inwestycja, data }) 
 // inne pola tekstowe wzoru (np. "Kierowca") - do kolumn o swojej nazwie.
 // pola: zapisane w rekordzie ({ id, kolumna, etykieta, jednostka, sekcja, rodzaj }).
 // niepewne: id pól, których odczyt pisma trzeba sprawdzić.
-export function pozycjeWniosku({ pola, wartosci, adres, rodzaj, link, zapisano, niepewne = [] }) {
+export function pozycjeWniosku({ pola, wartosci, adres, rodzaj, link, zapisano, rozpoczeto, zatwierdzono, niepewne = [] }) {
   const wartosc = p => String(wartosci?.[p.id] ?? '').trim();
   const wspolne = { Adres: adres, Rodzaj: rodzaj, 'Źródło': ZRODLO.wniosek };
   for (const p of pola) {
@@ -146,12 +146,17 @@ export function pozycjeWniosku({ pola, wartosci, adres, rodzaj, link, zapisano, 
     const klucz = p.rodzaj === 'data' ? 'Data' : /^ekip/.test(n) ? 'Ekipa' : /^moc\b/.test(n) ? 'Moc' : /^uwag/.test(n) ? 'Uwagi' : p.kolumna;
     wspolne[klucz] ??= v;
   }
+  // Wzór bez pola „Data” - data rozpoczęcia wniosku.
+  wspolne.Data ??= dataCzytelna(rozpoczeto || zapisano).slice(0, 10);
   return pola.filter(p => p.rodzaj === 'ilosc' && wartosc(p)).map(p => ({
     ...wspolne,
     Sekcja: p.sekcja || '',
     Pozycja: p.etykieta ?? p.kolumna,
     'Jedn.': p.jednostka || '',
     'Ilość': wartoscKomorki(wartosc(p)),
+    Status: zatwierdzono ? STATUS.zatwierdzony : STATUS.wTrakcie,
+    'Rozpoczęto': dataCzytelna(rozpoczeto),
+    Zatwierdzono: dataCzytelna(zatwierdzono),
     'Do sprawdzenia': niepewne.includes(p.id) ? 'tak' : '',
     Plik: link || '',
     Zapisano: dataCzytelna(zapisano)

@@ -6,7 +6,8 @@
 //
 // Arkusze:
 //   Pozycje - wiersz na pozycję materiału, każdy z adresem (jak tabela
-//             z aplikacji Listy materiałowe),
+//             z aplikacji Listy materiałowe); wiersze wniosku niosą też
+//             jego status, datę rozpoczęcia i zatwierdzenia,
 //   Wnioski - wiersz na wniosek: status, kiedy rozpoczęty, kiedy zatwierdzony,
 //             link do PDF (biuro odblokowuje wniosek, czyszcząc „Zatwierdzono”),
 //   Razem   - suma każdej pozycji, formułą z arkusza Pozycje.
@@ -19,12 +20,12 @@ export const ARKUSZ = { pozycje: 'Pozycje', wnioski: 'Wnioski', razem: 'Razem' }
 export const ZRODLO = { wniosek: 'Wniosek materiałowy', lista: 'Lista materiałowa (skan)' };
 export const STATUS = { wTrakcie: 'W trakcie', zatwierdzony: 'Zatwierdzony' };
 
-export const KOLUMNY_POZYCJI = ['Adres', 'Rodzaj', 'Źródło', 'Sekcja', 'Pozycja', 'Jedn.', 'Ilość', 'Dodatkowo', 'Uwagi', 'Data', 'Ekipa', 'Moc', 'Do sprawdzenia', 'Plik', 'Zapisano'];
+export const KOLUMNY_POZYCJI = ['Adres', 'Rodzaj', 'Źródło', 'Sekcja', 'Pozycja', 'Jedn.', 'Ilość', 'Dodatkowo', 'Uwagi', 'Data', 'Ekipa', 'Moc', 'Status', 'Rozpoczęto', 'Zatwierdzono', 'Do sprawdzenia', 'Plik', 'Zapisano'];
 export const KOLUMNY_WNIOSKOW = ['Adres', 'Rodzaj', 'Status', 'Rozpoczęto', 'Ostatnia zmiana', 'Zatwierdzono', 'PDF'];
 
 // Suma ilości każdej pozycji osobno dla źródła i rodzaju instalacji
 // (składnia formuł w Sheets API: angielskie nazwy, przecinki).
-export const FORMULA_RAZEM = `=QUERY(${ARKUSZ.pozycje}!A:O,"select C, B, E, F, sum(G) where E <> '' group by C, B, E, F order by C, B, E label C 'Źródło', B 'Rodzaj', E 'Pozycja', F 'Jedn.', sum(G) 'Ilość razem'",1)`;
+export const FORMULA_RAZEM = `=QUERY(${ARKUSZ.pozycje}!A:Z,"select C, B, E, F, sum(G) where E <> '' group by C, B, E, F order by C, B, E label C 'Źródło', B 'Rodzaj', E 'Pozycja', F 'Jedn.', sum(G) 'Ilość razem'",1)`;
 
 // --- tekst ---------------------------------------------------------------------
 

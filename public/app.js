@@ -1409,7 +1409,7 @@ async function wpiszWniosek(rekord) {
   try {
     const id = await tabelaMat.tabelaMaterialowa(google, rekord.inwestycja);
     await tabelaMat.zapiszPozycje(google, id, {
-      nowe: pozycjeWniosku({ pola: rekord.pola || [], wartosci: { ...naglowek, ...odczyt.wartosci }, niepewne: odczyt.niepewne, adres: rekord.adres, rodzaj, link: rekord.drive?.link, zapisano: rekord.zmieniono }),
+      nowe: pozycjeWniosku({ pola: rekord.pola || [], wartosci: { ...naglowek, ...odczyt.wartosci }, niepewne: odczyt.niepewne, adres: rekord.adres, rodzaj, link: rekord.drive?.link, zapisano: rekord.zmieniono, rozpoczeto: rekord.rozpoczeto, zatwierdzono: rekord.zatwierdzono }),
       czyStary: w => w['Źródło'] === tabelaMat.ZRODLO.wniosek && tabelaMat.kluczWniosku(w.Adres, w.Rodzaj) === tabelaMat.kluczWniosku(rekord.adres, rodzaj)
     });
     await tabelaMat.zapiszWniosek(google, id, { adres: rekord.adres, rodzaj, rozpoczeto: rekord.rozpoczeto, zmieniono: rekord.zmieniono, zatwierdzono: rekord.zatwierdzono, link: rekord.drive?.link });

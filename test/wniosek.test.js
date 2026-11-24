@@ -99,12 +99,14 @@ test('pozycje wniosku do tabeli materiałowej: wiersz na wpisaną ilość, z adr
   const wiersze = pozycjeWniosku({
     pola,
     wartosci: { inwestycja: 'Testowo', adres: 'Testowa 1', data: '23.11.2026', ekipa: 'Ekipa 2', kierowca: 'Jan', 'falownik szt': '1', 'kabel m': '35,5', 'hak szt': ' ' },
-    adres: 'Testowa 1', rodzaj: 'PV', link: 'https://example.com/p', zapisano: '2026-11-23T10:00:00'
+    adres: 'Testowa 1', rodzaj: 'PV', link: 'https://example.com/p', zapisano: '2026-11-23T10:00:00',
+    rozpoczeto: '2026-11-22T08:30:00', zatwierdzono: '2026-11-23T10:00:00'
   });
   assert.equal(wiersze.length, 2);
   assert.deepEqual(wiersze[1], {
     Adres: 'Testowa 1', Rodzaj: 'PV', 'Źródło': ZRODLO.wniosek, Data: '23.11.2026', Ekipa: 'Ekipa 2', Kierowca: 'Jan',
-    Sekcja: 'ELEKTRYKA', Pozycja: 'Kabel', 'Jedn.': 'm', 'Ilość': 35.5, 'Do sprawdzenia': '', Plik: 'https://example.com/p', Zapisano: '23.11.2026 10:00'
+    Sekcja: 'ELEKTRYKA', Pozycja: 'Kabel', 'Jedn.': 'm', 'Ilość': 35.5,
+    Status: 'Zatwierdzony', 'Rozpoczęto': '22.11.2026 08:30', Zatwierdzono: '23.11.2026 10:00', 'Do sprawdzenia': '', Plik: 'https://example.com/p', Zapisano: '23.11.2026 10:00'
   });
 });
 
@@ -126,4 +128,13 @@ test('PDF wniosku niesie stan do edycji (wartości, kreski, czysty wzór)', asyn
   const pola = polaWzoru(await tekstSzablonu(await otworz(odczyt.wzor)));
   assert.equal(pola.filter(p => p.rodzaj === 'ilosc').length, 19);
   assert.equal(await stanZPdf(await otworz(wzor)), null);
+});
+
+test('wiersz wniosku bez pola Data we wzorze dostaje datę rozpoczęcia', () => {
+  const pola = [{ id: 'kabel m', kolumna: 'Kabel [m]', etykieta: 'Kabel', jednostka: 'm', rodzaj: 'ilosc' }];
+  const [w] = pozycjeWniosku({ pola, wartosci: { 'kabel m': '12' }, adres: 'Testowa 1', rodzaj: 'PC', zapisano: '2026-11-24T09:00:00', rozpoczeto: '2026-11-20T07:15:00' });
+  assert.equal(w.Data, '20.11.2026');
+  assert.equal(w.Status, 'W trakcie');
+  assert.equal(w['Rozpoczęto'], '20.11.2026 07:15');
+  assert.equal(w.Zatwierdzono, '');
 });
