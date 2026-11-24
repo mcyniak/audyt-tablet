@@ -6,7 +6,7 @@ import { utworzEdytor } from './src/edytor.js';
 import { zbudujPdf } from './src/eksport.js';
 import { wybierzWzor, wzorWniosku, rozpoznajWzor } from './src/wzory.js';
 import { PYTANIA_PV, kolumnyPytan, odpowiedziZWiersza, znajdzWiersz, zmianyWiersza, pytaniaNaWzorze, odpowiedziZProtokolu } from './src/ankieta.js';
-import { polaWzoru, wartosciPoczatkowe, pozycjeWniosku, dataCzytelna, zalacznikiStanu, stanZPdf } from './src/wniosek.js';
+import { polaWzoru, wartosciPoczatkowe, pozycjeWniosku, datyWnioskuWWierszu, dataCzytelna, zalacznikiStanu, stanZPdf } from './src/wniosek.js';
 import * as tabelaMat from './src/tabela-materialowa.js';
 import { przypiszKreski, podpisPisma, wycinekPola, odczytajIlosci, zlyKlucz } from './src/odczyt-pisma.js';
 import { ikona, wstawIkony } from './src/ikony.js';
@@ -1135,6 +1135,8 @@ async function ekranWniosek(idInwestycji, idAdresu, typ) {
     utworzono: new Date().toISOString()
   };
   rekord.wzor = kluczWzoru;
+  // Wiersze adresu w tabeli montażowej - tam idą daty zapisu i zatwierdzenia.
+  rekord.wiersze = a.rekordy.filter(r => r.typ === typ).map(({ arkusz, wiersz, uid, adres }) => ({ arkusz, wiersz, uid, adres }));
   otwarty.rekord = rekord;
   otwarty.szablon = szablon;
   otwarty.dokument = await pdfjs.getDocument({ data: new Uint8Array(szablon.bajty.slice(0)) }).promise;
@@ -1417,11 +1419,38 @@ async function wpiszWniosek(rekord) {
     if (blad.status === 403) throw new Error('to konto nie może edytować tabeli materiałowej – biuro musi dać uprawnienia „Edytujący” do folderu inwestycji');
     throw blad;
   }
+  await datyWnioskuDoMontazowej(rekord);
   if (stan.inwestycja?.id === rekord.inwestycja) {
     stan.statusyWnioskow.set(tabelaMat.kluczWniosku(rekord.adres, rodzaj), { zatwierdzony: Boolean(rekord.zatwierdzono), zatwierdzono: dataCzytelna(rekord.zatwierdzono) });
   }
 }
 
+
+// Data zapisu i zatwierdzenia wniosku w wierszu adresu w tabeli montażowej.
+async function datyWnioskuDoMontazowej(rekord) {
+  const { tabela } = await odczytaj('inwestycje', rekord.inwestycja);
+  if (tabela.mimeType !== google.MIME.arkusz) { console.warn(TYLKO_ARKUSZ_GOOGLE); return; }
+  try {
+    let siatki = null;
+    for (const cel of rekord.wiersze || []) {
+      const wiersze = await google.wartosciArkusza(tabela.id, cel.arkusz);
+      const nrWiersza = znajdzWiersz(wiersze, cel);
+      if (!nrWiersza) throw new Error(`nie znalazłem w tabeli montażowej wiersza „${cel.adres}” (arkusz ${cel.arkusz})`);
+      const { dane, szerokosc } = datyWnioskuWWierszu({ arkusz: cel.arkusz, wiersze, nrWiersza, zapisano: rekord.zmieniono, zatwierdzono: rekord.zatwierdzono });
+      if (!dane.length) continue;
+      siatki ||= await google.arkuszeTabeli(tabela.id);
+      const s = siatki.find(x => x.title === cel.arkusz);
+      if (s && szerokosc > s.gridProperties.columnCount) {
+        await google.zmianyTabeli(tabela.id, [{ appendDimension: { sheetId: s.sheetId, dimension: 'COLUMNS', length: szerokosc - s.gridProperties.columnCount } }]);
+        s.gridProperties.columnCount = szerokosc;
+      }
+      await google.zapiszKomorki(tabela.id, dane);
+    }
+  } catch (blad) {
+    if (blad.status === 403) throw new Error('to konto nie może edytować tabeli montażowej – biuro musi dać uprawnienia „Edytujący”');
+    throw blad;
+  }
+}
 
 // --- Start ---
 

@@ -8,7 +8,7 @@ import fontkit from '@pdf-lib/fontkit';
 import { tekstSzablonu } from '../public/src/wypelnianie.js';
 import { zbudujPdf } from '../public/src/eksport.js';
 import { rozpoznajWzor, wybierzWzor, wzorWniosku } from '../public/src/wzory.js';
-import { polaWzoru, wartosciPoczatkowe, pozycjeWniosku, zalacznikiStanu, stanZPdf } from '../public/src/wniosek.js';
+import { polaWzoru, wartosciPoczatkowe, pozycjeWniosku, datyWnioskuWWierszu, zalacznikiStanu, stanZPdf } from '../public/src/wniosek.js';
 import { ZRODLO } from '../public/src/tabela-materialowa.js';
 
 const WZOR = new URL('../wzory/Wniosek materiałowy PV - przykład.pdf', import.meta.url);
@@ -137,4 +137,20 @@ test('wiersz wniosku bez pola Data we wzorze dostaje datę rozpoczęcia', () => 
   assert.equal(w.Status, 'W trakcie');
   assert.equal(w['Rozpoczęto'], '20.11.2026 07:15');
   assert.equal(w.Zatwierdzono, '');
+});
+
+test('daty wniosku w wierszu adresu tabeli montażowej', () => {
+  const wiersze = [['Lista PV'], ['Lp.', 'Adres', 'Moc', 'Uwagi'], [1, 'Testowa 1', '5 kW'], [2, 'Testowa 2', '', 'notatka']];
+  // Brak kolumn - dopisane za ostatnią zajętą kolumną (D), w wierszu nagłówka.
+  const nowe = datyWnioskuWWierszu({ arkusz: "PV ME", wiersze, nrWiersza: 3, zapisano: '2026-11-24T09:05:00', zatwierdzono: null });
+  assert.equal(nowe.szerokosc, 6);
+  assert.deepEqual(nowe.dane, [
+    { range: "'PV ME'!E2", values: [['Wniosek materiałowy - zapisano']] },
+    { range: "'PV ME'!E3", values: [['24.11.2026 09:05']] },
+    { range: "'PV ME'!F2", values: [['Wniosek materiałowy - zatwierdzono']] }
+  ]);
+  // Istniejące kolumny (przesunięte przez biuro) - tylko zmienione komórki.
+  const z = [['Adres', 'Wniosek zatwierdzono', 'Wniosek zapisano'], ['Testowa 1', '', '24.11.2026 09:05']];
+  assert.deepEqual(datyWnioskuWWierszu({ arkusz: 'PC', wiersze: z, nrWiersza: 2, zapisano: '2026-11-24T09:05:00', zatwierdzono: '2026-11-25T12:00:00' }).dane,
+    [{ range: "'PC'!B2", values: [['25.11.2026 12:00']] }]);
 });

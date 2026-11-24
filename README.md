@@ -139,6 +139,10 @@ bez „Wszystkie”) → adres. Pod jednym adresem PV i PC to dwa osobne wnioski
   - *Wnioski* – Adres, Rodzaj, Status, Rozpoczęto, Ostatnia zmiana, Zatwierdzono, PDF.
   - *Razem* – formuła QUERY: suma każdej pozycji wg źródła i rodzaju.
   Kolumny szukane po nagłówku – kolumn dopisanych przez biuro aplikacja nie rusza.
+- **Tabela montażowa** – w wierszu adresu (arkusz danego rodzaju) kolumny
+  „Wniosek materiałowy - zapisano” i „Wniosek materiałowy - zatwierdzono”
+  (data i godzina). Brakujące dopisują się za ostatnią kolumną; szukane po
+  nagłówku ze słowami „wniosek” + „zapis”/„zatwierdz”, więc biuro może je przesunąć.
 - **Edycja z każdego urządzenia.** PDF ma w środku załączniki
   `wniosek-stan.json` (wartości, kreski) i `wniosek-wzor.pdf` (czysty wzór).
   Gdy na Dysku jest nowsza wersja niż w tablecie (albo w tablecie nie ma

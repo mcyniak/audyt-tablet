@@ -8,7 +8,7 @@
 // (np. "Uwagi: ......", podpis) wypełnia się rysikiem.
 //
 // Moduł bez zależności od przeglądarki, więc testy w Node też go używają.
-import { normalizuj } from './tabela.js';
+import { normalizuj, znajdzNaglowek } from './tabela.js';
 import { ZRODLO, STATUS, wartoscKomorki, dataCzytelna } from './tabela-materialowa.js';
 
 export { dataCzytelna };
@@ -161,6 +161,44 @@ export function pozycjeWniosku({ pola, wartosci, adres, rodzaj, link, zapisano, 
     Plik: link || '',
     Zapisano: dataCzytelna(zapisano)
   }));
+}
+
+// --- Daty wniosku w tabeli montażowej (wiersz adresu) ---
+//
+// Dwie kolumny, szukane po nagłówku (biuro może je przesunąć albo lekko
+// przemianować, byle zostało „wniosek” i „zapis”/„zatwierdz”); brakujące
+// dopisujemy w wierszu nagłówka za ostatnią zajętą kolumną arkusza.
+
+export const KOLUMNY_MONTAZOWE = { zapisano: 'Wniosek materiałowy - zapisano', zatwierdzono: 'Wniosek materiałowy - zatwierdzono' };
+const PASUJE_MONTAZOWA = { zapisano: /wniosek.*zapis/, zatwierdzono: /wniosek.*zatwierdz/ };
+
+/**
+ * wiersze: świeżo pobrany arkusz, nrWiersza: wiersz adresu (od 1).
+ * @returns {{ dane: {range, values}[], szerokosc: number }}
+ */
+export function datyWnioskuWWierszu({ arkusz, wiersze, nrWiersza, zapisano, zatwierdzono }) {
+  const naglowek = znajdzNaglowek(wiersze);
+  if (!naglowek) return { dane: [], szerokosc: 0 };
+  const komorka = (k, w) => `'${arkusz.replace(/'/g, "''")}'!${kolumnaA1(k)}${w}`;
+  const nazwy = (wiersze[naglowek.wiersz] || []).map(normalizuj);
+  let szerokosc = Math.max(0, ...wiersze.map(w => w?.length || 0));
+  const dane = [];
+  for (const [klucz, wartosc] of [['zapisano', zapisano], ['zatwierdzono', zatwierdzono]]) {
+    let k = nazwy.findIndex(n => PASUJE_MONTAZOWA[klucz].test(n));
+    if (k === -1) {
+      k = szerokosc++;
+      dane.push({ range: komorka(k, naglowek.wiersz + 1), values: [[KOLUMNY_MONTAZOWE[klucz]]] });
+    }
+    const tekst = dataCzytelna(wartosc);
+    if (String(wiersze[nrWiersza - 1]?.[k] ?? '') !== tekst) dane.push({ range: komorka(k, nrWiersza), values: [[tekst]] });
+  }
+  return { dane, szerokosc };
+}
+
+function kolumnaA1(i) {
+  let s = '';
+  for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s;
+  return s;
 }
 
 // --- Stan do edycji zapisany w samym PDF ---
