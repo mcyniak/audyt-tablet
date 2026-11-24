@@ -6,7 +6,7 @@ import { utworzEdytor } from './src/edytor.js';
 import { zbudujPdf } from './src/eksport.js';
 import { wybierzWzor, wzorWniosku, rozpoznajWzor } from './src/wzory.js';
 import { PYTANIA_PV, kolumnyPytan, odpowiedziZWiersza, znajdzWiersz, zmianyWiersza, pytaniaNaWzorze, odpowiedziZProtokolu } from './src/ankieta.js';
-import { polaWzoru, wartosciPoczatkowe, pozycjeWniosku, datyWnioskuWWierszu, dataCzytelna, zalacznikiStanu, stanZPdf } from './src/wniosek.js';
+import { polaWzoru, wartosciPoczatkowe, pozycjeWniosku, datyWnioskuWWierszu, KOLUMNY_MONTAZOWE, dataCzytelna, zalacznikiStanu, stanZPdf } from './src/wniosek.js';
 import * as tabelaMat from './src/tabela-materialowa.js';
 import { przypiszKreski, podpisPisma, wycinekPola, odczytajIlosci, zlyKlucz } from './src/odczyt-pisma.js';
 import { ikona, wstawIkony } from './src/ikony.js';
@@ -1327,6 +1327,7 @@ async function zapiszWniosek(otwarty, { zatwierdz = false } = {}) {
       await wyslijRekord(rekord);
       trwa.remove();
       toast(`${zatwierdzono ? 'Zatwierdzono' : 'Zapisano'} na Dysku i w tabeli: ${nazwa}`, { typ: 'ok', akcja: nastepny, czas: 8000 });
+      if (rekord.uwagaMontazowa) toast(`Daty nie wpisały się do tabeli montażowej: ${rekord.uwagaMontazowa}.`, { typ: 'blad', czas: 15000 });
     } catch (blad) {
       console.error(blad);
       trwa.remove();
@@ -1419,7 +1420,9 @@ async function wpiszWniosek(rekord) {
     if (blad.status === 403) throw new Error('to konto nie może edytować tabeli materiałowej – biuro musi dać uprawnienia „Edytujący” do folderu inwestycji');
     throw blad;
   }
-  await datyWnioskuDoMontazowej(rekord);
+  // Daty w tabeli montażowej nie blokują wniosku (np. chroniony nagłówek) -
+  // uwaga dla szefa magazynu, ponowna próba przy następnym zapisie.
+  rekord.uwagaMontazowa = await datyWnioskuDoMontazowej(rekord);
   if (stan.inwestycja?.id === rekord.inwestycja) {
     stan.statusyWnioskow.set(tabelaMat.kluczWniosku(rekord.adres, rodzaj), { zatwierdzony: Boolean(rekord.zatwierdzono), zatwierdzono: dataCzytelna(rekord.zatwierdzono) });
   }
@@ -1427,15 +1430,18 @@ async function wpiszWniosek(rekord) {
 
 
 // Data zapisu i zatwierdzenia wniosku w wierszu adresu w tabeli montażowej.
+// Zwraca opis problemu dla szefa magazynu albo null, gdy wszystko wpisane.
 async function datyWnioskuDoMontazowej(rekord) {
   const { tabela } = await odczytaj('inwestycje', rekord.inwestycja);
-  if (tabela.mimeType !== google.MIME.arkusz) { console.warn(TYLKO_ARKUSZ_GOOGLE); return; }
-  try {
-    let siatki = null;
-    for (const cel of rekord.wiersze || []) {
+  if (tabela.mimeType !== google.MIME.arkusz) return TYLKO_ARKUSZ_GOOGLE;
+  const kolumny = `„${KOLUMNY_MONTAZOWE.zapisano}” i „${KOLUMNY_MONTAZOWE.zatwierdzono}”`;
+  const problemy = [];
+  let siatki = null;
+  for (const cel of rekord.wiersze || []) {
+    try {
       const wiersze = await google.wartosciArkusza(tabela.id, cel.arkusz);
       const nrWiersza = znajdzWiersz(wiersze, cel);
-      if (!nrWiersza) throw new Error(`nie znalazłem w tabeli montażowej wiersza „${cel.adres}” (arkusz ${cel.arkusz})`);
+      if (!nrWiersza) { problemy.push(`nie ma wiersza „${cel.adres}” w arkuszu ${cel.arkusz}`); continue; }
       const { dane, szerokosc } = datyWnioskuWWierszu({ arkusz: cel.arkusz, wiersze, nrWiersza, zapisano: rekord.zmieniono, zatwierdzono: rekord.zatwierdzono });
       if (!dane.length) continue;
       siatki ||= await google.arkuszeTabeli(tabela.id);
@@ -1445,11 +1451,14 @@ async function datyWnioskuDoMontazowej(rekord) {
         s.gridProperties.columnCount = szerokosc;
       }
       await google.zapiszKomorki(tabela.id, dane);
+    } catch (blad) {
+      console.warn(blad);
+      if (/chronion|protected/i.test(blad.message)) problemy.push(`nagłówek arkusza ${cel.arkusz} jest chroniony – właściciel tabeli musi raz dopisać w nagłówku kolumny ${kolumny}`);
+      else if (blad.status === 403) problemy.push('to konto nie może edytować tabeli montażowej – biuro musi dać uprawnienia „Edytujący”');
+      else problemy.push(blad.message);
     }
-  } catch (blad) {
-    if (blad.status === 403) throw new Error('to konto nie może edytować tabeli montażowej – biuro musi dać uprawnienia „Edytujący”');
-    throw blad;
   }
+  return problemy.length ? [...new Set(problemy)].join('; ') : null;
 }
 
 // --- Start ---

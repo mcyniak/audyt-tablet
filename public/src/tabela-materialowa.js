@@ -23,9 +23,13 @@ export const STATUS = { wTrakcie: 'W trakcie', zatwierdzony: 'Zatwierdzony' };
 export const KOLUMNY_POZYCJI = ['Adres', 'Rodzaj', 'Źródło', 'Sekcja', 'Pozycja', 'Jedn.', 'Ilość', 'Dodatkowo', 'Uwagi', 'Data', 'Ekipa', 'Moc', 'Status', 'Rozpoczęto', 'Zatwierdzono', 'Do sprawdzenia', 'Plik', 'Zapisano'];
 export const KOLUMNY_WNIOSKOW = ['Adres', 'Rodzaj', 'Status', 'Rozpoczęto', 'Ostatnia zmiana', 'Zatwierdzono', 'PDF'];
 
-// Suma ilości każdej pozycji osobno dla źródła i rodzaju instalacji
-// (składnia formuł w Sheets API: angielskie nazwy, przecinki).
-export const FORMULA_RAZEM = `=QUERY(${ARKUSZ.pozycje}!A:Z,"select C, B, E, F, sum(G) where E <> '' group by C, B, E, F order by C, B, E label C 'Źródło', B 'Rodzaj', E 'Pozycja', F 'Jedn.', sum(G) 'Ilość razem'",1)`;
+// Suma ilości każdej pozycji osobno dla źródła i rodzaju instalacji.
+// Nazwy funkcji zawsze angielskie, ale separator argumentów zależy od
+// ustawień regionalnych arkusza: polski (przecinek dziesiętny) chce średników.
+export const separatorFormul = locale =>
+  (1.5).toLocaleString(String(locale || 'en_US').replace('_', '-')).includes(',') ? ';' : ',';
+export const formulaRazem = (sep = ',') => `=QUERY(${ARKUSZ.pozycje}!A:Z${sep}"select C, B, E, F, sum(G) where E <> '' group by C, B, E, F order by C, B, E label C 'Źródło', B 'Rodzaj', E 'Pozycja', F 'Jedn.', sum(G) 'Ilość razem'"${sep}1)`;
+export const FORMULA_RAZEM = formulaRazem(',');
 
 // --- tekst ---------------------------------------------------------------------
 
@@ -185,6 +189,7 @@ export function statusyWnioskow(wiersze) {
 //   zmianyTabeli(id, requests) -> odpowiedź spreadsheets:batchUpdate
 //   wartosciArkusza(id, nazwa) -> wiersze
 //   zapiszKomorki(id, dane, opcja = 'RAW')
+//   lokalizacjaTabeli(id) -> np. 'pl_PL' (opcjonalna; bez niej 'en_US')
 
 const toTabela = nazwa => /tabela\s+materia/.test(normalizuj(nazwa));
 
@@ -221,7 +226,10 @@ export async function przygotujTabele(g, id) {
     const odp = await g.zmianyTabeli(id, requests);
     const dodane = (odp.replies || []).map(r => r.addSheet?.properties).filter(Boolean);
     if (dodane.length) await g.zmianyTabeli(id, dodane.map(p => pogrubNaglowek(p.sheetId)));
-    if (nowe.includes(ARKUSZ.razem)) await g.zapiszKomorki(id, [{ range: zakres(ARKUSZ.razem, 0, 1), values: [[FORMULA_RAZEM]] }], 'USER_ENTERED');
+    if (nowe.includes(ARKUSZ.razem)) {
+      const sep = separatorFormul(await g.lokalizacjaTabeli?.(id));
+      await g.zapiszKomorki(id, [{ range: zakres(ARKUSZ.razem, 0, 1), values: [[formulaRazem(sep)]] }], 'USER_ENTERED');
+    }
     arkusze = await g.arkuszeTabeli(id);
   }
   return new Map(arkusze.map(a => [a.title, { sheetId: a.sheetId, wierszy: a.gridProperties?.rowCount || 0, kolumn: a.gridProperties?.columnCount || 0 }]));

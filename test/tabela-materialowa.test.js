@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  KOLUMNY_POZYCJI, KOLUMNY_WNIOSKOW, ARKUSZ, ZRODLO, STATUS, FORMULA_RAZEM,
+  KOLUMNY_POZYCJI, KOLUMNY_WNIOSKOW, ARKUSZ, ZRODLO, STATUS, FORMULA_RAZEM, separatorFormul, formulaRazem,
   zmianyPozycji, blokiDoUsuniecia, zmianyWniosku, statusyWnioskow, kluczWniosku,
   wartoscKomorki, kolumnaA1, tabelaMaterialowa, zapiszPozycje, zapiszWniosek
 } from '../public/src/tabela-materialowa.js';
@@ -166,4 +166,12 @@ test('zapis przez Google: nowa tabela w folderze inwestycji, poprawka zastępuje
   await zapiszWniosek(g, id, { adres: 'Testowa 1', rodzaj: 'PV', rozpoczeto: '2026-11-20T08:05:00', zmieniono: '2026-11-21T08:05:00', zatwierdzono: '2026-11-21T08:05:00', link: '' });
   assert.equal(t.wartosci[ARKUSZ.wnioski].length, 2);
   assert.equal(t.wartosci[ARKUSZ.wnioski][1][2], STATUS.zatwierdzony);
+});
+
+test('formuła Razem: średniki w polskim arkuszu, przecinki w angielskim', () => {
+  assert.equal(separatorFormul('pl_PL'), ';');
+  assert.equal(separatorFormul('de_DE'), ';');
+  assert.equal(separatorFormul('en_US'), ',');
+  assert.equal(separatorFormul(undefined), ',');
+  assert.match(formulaRazem(';'), /^=QUERY\(Pozycje!A:Z;".*";1\)$/);
 });

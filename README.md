@@ -143,6 +143,9 @@ bez „Wszystkie”) → adres. Pod jednym adresem PV i PC to dwa osobne wnioski
   „Wniosek materiałowy - zapisano” i „Wniosek materiałowy - zatwierdzono”
   (data i godzina). Brakujące dopisują się za ostatnią kolumną; szukane po
   nagłówku ze słowami „wniosek” + „zapis”/„zatwierdz”, więc biuro może je przesunąć.
+  Gdy nagłówek arkusza jest chroniony, kolumny musi raz dopisać właściciel
+  tabeli; do tego czasu wniosek zapisuje się normalnie, a aplikacja pokazuje
+  uwagę i próbuje ponownie przy następnym zapisie.
 - **Edycja z każdego urządzenia.** PDF ma w środku załączniki
   `wniosek-stan.json` (wartości, kreski) i `wniosek-wzor.pdf` (czysty wzór).
   Gdy na Dysku jest nowsza wersja niż w tablecie (albo w tablecie nie ma
