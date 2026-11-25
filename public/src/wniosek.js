@@ -158,36 +158,49 @@ export function wartosciPoczatkowe(pola, { adres, data }) {
   return Object.fromEntries(pola.filter(p => z[p.rodzaj]).map(p => [p.id, z[p.rodzaj]]));
 }
 
-// Ilość pozycji po zapisie: odczyt pisma z jej pola albo ilość z wydruku.
-export function iloscKoncowa(pole, odczyt) {
+// Ilość pozycji po zapisie: wpisana z klawiatury, odczyt pisma z jej pola
+// albo ilość z wydruku - w tej kolejności.
+export function iloscKoncowa(pole, odczyt, reczne = {}) {
+  const r = String(reczne?.[pole.id] ?? '').trim();
+  if (r) return r;
   const w = odczyt?.wartosci || {};
   return pole.id in w ? String(w[pole.id] ?? '').trim() : (pole.wydrukowano || '');
 }
+
+// Ilość wpisana z klawiatury (ma pierwszeństwo przed pismem i wydrukiem).
+export const recznaIlosc = (pole, reczne) => String(reczne?.[pole.id] ?? '').trim();
 
 // --- arkusz „Materiałówka” ------------------------------------------------------
 
 export const KOLUMNY_MATERIALOWKI = ['adres', 'towar', 'liczba', 'zestaw', 'data zapisania', 'data zatwierdzenia', 'do sprawdzenia'];
 
 /**
- * Wiersze materiałówki: jeden na pozycję z ilością (skreślone do zera pomijamy).
- * pola: zapisane w rekordzie, odczyt: { wartosci, niepewne } z odczytu pisma.
+ * Wiersze materiałówki: jeden na pozycję z ilością (skreślone do zera pomijamy)
+ * i na każdą pozycję dopisaną spoza zestawu.
+ * pola: zapisane w rekordzie, odczyt: { wartosci, niepewne } z odczytu pisma,
+ * reczne: ilości wpisane z klawiatury (id pola -> tekst),
+ * dodatkowe: [{ nazwa, ilosc }] - pozycje dopisane.
  */
-export function wierszeMaterialowki({ pola, odczyt, adres, zestaw, zapisano, zatwierdzono }) {
+export function wierszeMaterialowki({ pola, odczyt, reczne = {}, dodatkowe = [], adres, zestaw, zapisano, zatwierdzono }) {
   const niepewne = odczyt?.niepewne || [];
-  return pola.filter(p => p.rodzaj === 'ilosc').flatMap(p => {
-    const ilosc = iloscKoncowa(p, odczyt);
+  const wiersz = (towar, ilosc, zestawWiersza, sprawdzic) => {
     const liczba = wartoscKomorki(ilosc);
     if (ilosc === '' || liczba === 0) return [];
     return [{
       adres,
-      towar: p.etykieta,
+      towar,
       liczba,
-      zestaw: zestaw || '',
+      zestaw: zestawWiersza,
       'data zapisania': dataCzytelna(zapisano),
       'data zatwierdzenia': dataCzytelna(zatwierdzono),
-      'do sprawdzenia': niepewne.includes(p.id) ? 'tak' : ''
+      'do sprawdzenia': sprawdzic ? 'tak' : ''
     }];
-  });
+  };
+  return [
+    ...pola.filter(p => p.rodzaj === 'ilosc').flatMap(p =>
+      wiersz(p.etykieta, iloscKoncowa(p, odczyt, reczne), zestaw || '', !recznaIlosc(p, reczne) && niepewne.includes(p.id))),
+    ...dodatkowe.flatMap(d => wiersz(String(d.nazwa || '').trim(), String(d.ilosc ?? '').trim(), zestaw ? `${zestaw} – dopisane` : 'dopisane', false))
+  ];
 }
 
 /**
@@ -268,6 +281,25 @@ export function datyWMontazowej({ arkusz, wiersze, nrWiersza, zapisano, zatwierd
     else dane.push({ range: komorka(k.zatwierdzenie, nrWiersza), values: [[dataArkusza(zatwierdzono)]] });
   }
   return { dane, brak };
+}
+
+/**
+ * Usunięta (niezatwierdzona) materiałówka: czyszczenie daty wydania w wierszu
+ * adresu. Data zakończenia zostaje - nie usuwa się zatwierdzonych.
+ * @returns {{ dane: {range, values}[], kolumna: number }} kolumna - indeks daty wydania albo -1
+ */
+export function wyczyscWydanie({ arkusz, wiersze, nrWiersza }) {
+  const k = kolumnyDat(wiersze);
+  if (!k || k.zapis === -1 || !String(wiersze[nrWiersza - 1]?.[k.zapis] ?? '').trim()) return { dane: [], kolumna: k?.zapis ?? -1 };
+  return { dane: [{ range: `'${arkusz.replace(/'/g, "''")}'!${kolumnaA1(k.zapis)}${nrWiersza}`, values: [['']] }], kolumna: k.zapis };
+}
+
+// Ekipa z kolumny „Ekipa…” w wierszu adresu tabeli montażowej.
+export function ekipaZMontazowej(wiersze, nrWiersza) {
+  const naglowek = znajdzNaglowek(wiersze);
+  if (!naglowek) return '';
+  const i = (wiersze[naglowek.wiersz] || []).map(normalizuj).findIndex(n => /^\s*ekip/.test(n));
+  return i === -1 ? '' : String(wiersze[nrWiersza - 1]?.[i] ?? '').trim();
 }
 
 // Stan materiałówki z wiersza adresu: { wydano, zakonczono, maKolumneZatwierdzenia }

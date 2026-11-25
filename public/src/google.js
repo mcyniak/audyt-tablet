@@ -287,6 +287,20 @@ export async function metadanePliku(id) {
   }
 }
 
+// Plik do kosza Dysku. Na Dysku współdzielonym rola „Współtwórca” nie może
+// usuwać - wtedy zmiana nazwy (plik przestaje pasować do adresu).
+export async function doKosza(id, nazwaZapasowa) {
+  const zmien = body => api(`${DRIVE}/files/${id}?supportsAllDrives=true`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    await zmien({ trashed: true });
+    return true;
+  } catch (blad) {
+    if (blad.status !== 403 || !nazwaZapasowa) throw blad;
+    await zmien({ name: nazwaZapasowa });
+    return false;
+  }
+}
+
 // Z idPliku - nadpisanie poprzedniej wersji (poprawiony protokół nie tworzy
 // duplikatu), bez - nowy plik w folderze. Wysyłka jednym zapytaniem
 // (multipart), więc plik do ~5 MB - zdjęcia są wcześniej zmniejszane.

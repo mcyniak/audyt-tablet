@@ -126,8 +126,9 @@ magazynu: inwestycja → rodzaj instalacji (segmenty nad listą, bez „Wszystki
   „Nazwa” (i „Materiał”), także na kolejnych stronach bez powtórzonego
   nagłówka, do linii „Podpis…”. Pozycja = nazwa, materiał, l.p. i ilość
   wydrukowana w kolumnie na prawo od „Materiał”; zawinięta nazwa (linie bliżej
-  niż 7 pt) to jedna pozycja. Nad tabelą: „Ekipa” (z klawiatury), „Data”
-  i „Adres montażu” (wpisują się same).
+  niż 7 pt) to jedna pozycja. Nad tabelą: „Ekipa” (z kolumny „Ekipa…”
+  tabeli montażowej, gdy jest; można zmienić), „Data” i „Adres montażu”
+  (wpisują się same).
 - **Ilości:** wydrukowana zostaje, jeśli w jej polu nic nie napisano.
   Rysikiem: skreślenie = 0 (pozycja nie trafia do arkusza), nowa liczba =
   poprawka, liczba w pustym polu = dopisana ilość. Przy zatwierdzeniu (z
@@ -137,6 +138,27 @@ magazynu: inwestycja → rodzaj instalacji (segmenty nad listą, bez „Wszystki
   poprawki („2 → 7”); niepewne mają w arkuszu „do sprawdzenia: tak”. Odczyt
   powtarza się tylko po zmianie pisma. Klucz API wpisuje się raz na tablecie.
   Wiersze mają ~9,5 pt – przy pisaniu warto powiększyć stronę.
+- **Sprawdzenie odczytu bez wracania do kartki:** okno przy „Zapisz” i
+  „Zatwierdź” pokazuje tylko ilości, których AI nie jest pewne: wycinek
+  pisma, odczyt w polu do poprawienia i przyciski z drugim możliwym odczytem
+  (AI zwraca `alternatywa`). Poprawione tu tracą „do sprawdzenia”. Gdy
+  wszystko pewne: „Zapisz” bez okna, „Zatwierdź” – samo pytanie bez listy.
+- **Kolory:** „Zapisz” niebieski (można dalej poprawiać), „Zatwierdź”
+  zielony z kłódką (koniec poprawek).
+- **Przyciski nad zestawem** (do zatwierdzenia):
+  - *Ilości z klawiatury* – pola na komórkach ilości; wpisana wartość ma
+    pierwszeństwo przed pismem i wydrukiem (pole puste = pismo/wydruk). W PDF
+    wydrukowana liczba przekreślona, wpisana obok na niebiesko. Tryb
+    zapamiętany w tablecie.
+  - *Dopisz pozycję* – materiał spoza zestawu (nazwa, ilość): wiersz w
+    Materiałówce (zestaw „… – dopisane”) i dodatkowa strona na końcu PDF.
+  - *Zmień zestaw* – także po zapisie: pismo i ilości poprzedniego zestawu
+    znikają, ekipa/data/dopisane zostają; plik na Dysku ten sam (nowa nazwa).
+  - *Usuń materiałówkę* – PDF do kosza Dysku (bez prawa usuwania: nazwa
+    „USUNIĘTA – …”), wiersze adresu z Materiałówki, data wydania z tabeli
+    montażowej, rekord z tabletu. Zatwierdzonej nie da się usunąć.
+- **Poprawki po zapisie:** zapisaną materiałówkę otwiera się z listy i poprawia
+  (wszystko: pismo, klawiatura, dopisane); zapis podmienia PDF i wiersze.
 - **PDF** do `<…Materiałówki>/<PC|PV>/<adres>/<adres>_<zestaw>.pdf`.
 - **Arkusz „Materiałówka”** (w folderze rodzaju albo w folderze materiałówek;
   brak – zakładany w folderze rodzaju), zakładka o nazwie rodzaju („PC”/„PV”):

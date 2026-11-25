@@ -10,8 +10,8 @@ import fontkit from '@pdf-lib/fontkit';
 import { tekstSzablonu } from '../public/src/wypelnianie.js';
 import { zbudujPdf } from '../public/src/eksport.js';
 import {
-  polaZestawu, wartosciPoczatkowe, iloscKoncowa, wierszeMaterialowki, zmianyMaterialowki, arkuszMaterialowki,
-  datyWMontazowej, datyZMontazowej, dataZKomorki, podpowiedzZestawu, zalacznikiStanu, stanZPdf
+  polaZestawu, wartosciPoczatkowe, iloscKoncowa, recznaIlosc, wierszeMaterialowki, zmianyMaterialowki, arkuszMaterialowki,
+  datyWMontazowej, datyZMontazowej, wyczyscWydanie, ekipaZMontazowej, dataZKomorki, podpowiedzZestawu, zalacznikiStanu, stanZPdf
 } from '../public/src/wniosek.js';
 import { przypiszKreski } from '../public/src/odczyt-pisma.js';
 
@@ -113,6 +113,25 @@ test('wiersze Materiałówki: wydruk bez pisma, poprawka rysikiem, skreślenie d
   assert.deepEqual(w[0], { adres: 'Testowo 12', towar: 'Beton 25kg', liczba: 5, zestaw: 'set 9012', 'data zapisania': '24.11.2026 09:05', 'data zatwierdzenia': '', 'do sprawdzenia': '' });
 });
 
+test('ilość z klawiatury ma pierwszeństwo; pozycje dopisane spoza zestawu', () => {
+  const pola = [
+    { id: 'p1', rodzaj: 'ilosc', etykieta: 'Beton 25kg', wydrukowano: '5' },
+    { id: 'p2', rodzaj: 'ilosc', etykieta: 'Kolano', wydrukowano: '20' },
+    { id: 'p3', rodzaj: 'ilosc', etykieta: 'Bufor', wydrukowano: '' }
+  ];
+  const odczyt = { wartosci: { p2: '18' }, niepewne: ['p2'] };
+  const reczne = { p1: ' 6 ', p2: '19', ekipa: 'E1' };
+  assert.equal(recznaIlosc(pola[0], reczne), '6');
+  assert.equal(iloscKoncowa(pola[1], odczyt, reczne), '19');
+  assert.equal(iloscKoncowa(pola[2], odczyt, reczne), '');
+  const w = wierszeMaterialowki({ pola, odczyt, reczne, dodatkowe: [{ nazwa: 'Kabel 3x2,5', ilosc: '15' }, { nazwa: 'Taśma', ilosc: '0' }], adres: 'Testowo 12', zestaw: 'set 9012', zapisano: '2026-11-24T09:05:00' });
+  assert.deepEqual(w.map(r => [r.towar, r.liczba, r.zestaw, r['do sprawdzenia']]), [
+    ['Beton 25kg', 6, 'set 9012', ''],
+    ['Kolano', 19, 'set 9012', ''], // wpisane ręcznie - już nie „do sprawdzenia”
+    ['Kabel 3x2,5', 15, 'set 9012 – dopisane', '']
+  ]);
+});
+
 test('Materiałówka: wiersze adresu zastępowane, brakujące kolumny dopisane do nagłówka', () => {
   const wiersze = [
     ['adres', 'towar', 'liczba'],
@@ -159,6 +178,14 @@ test('stan materiałówki z tabeli montażowej; data z liczby seryjnej', () => {
   assert.equal(datyZMontazowej([['Adres'], ['X']], 2).maKolumneZatwierdzenia, false);
   assert.equal(dataZKomorki(46350), '24.11.2026');
   assert.equal(dataZKomorki('24.11.2026'), '24.11.2026');
+});
+
+test('usunięcie materiałówki czyści datę wydania; ekipa z kolumny „Ekipa”', () => {
+  assert.deepEqual(wyczyscWydanie({ arkusz: 'PC', wiersze: MONTAZ, nrWiersza: 3 }), { dane: [{ range: "'PC'!E3", values: [['']] }], kolumna: 4 });
+  assert.deepEqual(wyczyscWydanie({ arkusz: 'PC', wiersze: MONTAZ, nrWiersza: 2 }).dane, []);
+  const zEkipa = [['Adres', 'Ekipa montażowa'], ['Testowo 12', ' Ekipa 3 ']];
+  assert.equal(ekipaZMontazowej(zEkipa, 2), 'Ekipa 3');
+  assert.equal(ekipaZMontazowej(MONTAZ, 2), '');
 });
 
 test('podpowiedź zestawu z numeru pompy w tabeli montażowej', () => {

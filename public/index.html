@@ -20,7 +20,7 @@
     </div>
     <span class="znacznik-offline" id="siec" hidden><span data-ikona="offline"></span>Offline</span>
     <button class="ikona-btn" id="odswiez" type="button" aria-label="Odśwież z Dysku" hidden><span data-ikona="odswiez"></span></button>
-    <button class="btn btn-szary" id="zatwierdz-wniosek" type="button" hidden><span data-ikona="zatwierdz"></span>Zatwierdź</button>
+    <button class="btn btn-zatwierdz" id="zatwierdz-wniosek" type="button" hidden><span data-ikona="klodka"></span>Zatwierdź</button>
     <button class="btn btn-glowny" id="zapisz-protokol" type="button" hidden><span data-ikona="ok"></span>Zapisz</button>
   </header>
 
@@ -83,6 +83,12 @@
       <div class="kontakt" id="kontakt"></div>
       <div class="uwaga" id="komunikat" role="status" hidden></div>
       <div class="zdjecia" id="zdjecia"></div>
+      <div class="akcje-wniosku" id="akcje-wniosku" hidden>
+        <button type="button" class="btn btn-szary" id="klawiatura-ilosci" aria-pressed="false">123 Ilości z klawiatury</button>
+        <button type="button" class="btn btn-szary" id="dopisz-pozycje">+ Dopisz pozycję</button>
+        <button type="button" class="btn btn-szary" id="zmien-zestaw">Zmień zestaw</button>
+        <button type="button" class="btn btn-usun" id="usun-wniosek">Usuń materiałówkę</button>
+      </div>
       <div class="strony" id="strony"></div>
       <input type="file" id="wybierz-zdjecia" accept="image/*" multiple hidden>
 
@@ -160,15 +166,32 @@
   </dialog>
 
   <!-- Wniosek materiałowy: zatwierdzenie kończy edycję -->
+  <dialog id="dialog-dopisane" class="arkusz">
+    <div class="uchwyt"></div>
+    <form method="dialog">
+      <h2>Pozycje dopisane</h2>
+      <p class="arkusz-opis">Materiał spoza zestawu – trafi do Materiałówki i na dodatkową stronę PDF.</p>
+      <ul class="dopisane" id="lista-dopisanych"></ul>
+      <div class="dopisz-wiersz">
+        <input id="dopisz-nazwa" type="text" placeholder="Nazwa materiału" autocomplete="off" enterkeyhint="next">
+        <input id="dopisz-ilosc" type="text" inputmode="decimal" placeholder="Ilość" autocomplete="off" enterkeyhint="done">
+        <button type="button" class="btn btn-szary" id="dopisz-dodaj">Dodaj</button>
+      </div>
+      <div class="przyciski">
+        <button type="submit" value="ok" class="btn btn-glowny">Gotowe</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="dialog-zatwierdz" class="arkusz">
     <div class="uchwyt"></div>
     <form method="dialog">
-      <h2>Zatwierdzić materiałówkę?</h2>
-      <p class="arkusz-opis">Zatwierdzona materiałówka jest skończona – nie da się jej już poprawić. Data zatwierdzenia trafi do tabeli montażowej (kolumna zakończenia) i do Materiałówki.</p>
+      <h2 id="dialog-zatwierdz-tytul">Zatwierdzić materiałówkę?</h2>
+      <p class="arkusz-opis" id="dialog-zatwierdz-info">Zatwierdzona materiałówka jest skończona – nie da się jej już poprawić. Data zatwierdzenia trafi do tabeli montażowej (kolumna zakończenia) i do Materiałówki.</p>
       <div class="podsumowanie-wniosku" id="dialog-zatwierdz-opis"></div>
       <div class="przyciski">
         <button type="submit" value="anuluj" class="btn btn-szary">Wróć</button>
-        <button type="submit" value="ok" class="btn btn-glowny">Zatwierdź</button>
+        <button type="submit" value="ok" class="btn btn-glowny" id="dialog-zatwierdz-ok">Zatwierdź</button>
       </div>
     </form>
   </dialog>

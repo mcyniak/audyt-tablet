@@ -6,7 +6,7 @@ import { utworzEdytor } from './src/edytor.js';
 import { zbudujPdf } from './src/eksport.js';
 import { wybierzWzor } from './src/wzory.js';
 import { PYTANIA_PV, kolumnyPytan, odpowiedziZWiersza, znajdzWiersz, zmianyWiersza, pytaniaNaWzorze, odpowiedziZProtokolu } from './src/ankieta.js';
-import { polaZestawu, wartosciPoczatkowe, iloscKoncowa, wierszeMaterialowki, zmianyMaterialowki, arkuszMaterialowki, datyWMontazowej, datyZMontazowej, podpowiedzZestawu, blokiDoUsuniecia, dataCzytelna, zalacznikiStanu, stanZPdf } from './src/wniosek.js';
+import { polaZestawu, wartosciPoczatkowe, iloscKoncowa, recznaIlosc, wierszeMaterialowki, zmianyMaterialowki, arkuszMaterialowki, datyWMontazowej, datyZMontazowej, wyczyscWydanie, ekipaZMontazowej, podpowiedzZestawu, blokiDoUsuniecia, dataCzytelna, zalacznikiStanu, stanZPdf } from './src/wniosek.js';
 import { zakres } from './src/tabela-materialowa.js';
 import { przypiszKreski, podpisPisma, wycinekPola, odczytajIlosci, zlyKlucz } from './src/odczyt-pisma.js';
 import { ikona, wstawIkony } from './src/ikony.js';
@@ -144,8 +144,28 @@ async function trasa() {
   }
 }
 
-window.addEventListener('hashchange', trasa);
+// Numer wpisu w historii (state.n): wejście do inwestycji/adresu dostaje
+// kolejny numer. Aplikacja otwarta od razu w środku (odświeżona, przywrócona
+// karta) dostaje pod spodem wpisy rodziców - „wstecz” (także przycisk tabletu)
+// wraca do listy adresów i inwestycji, zamiast zamykać aplikację.
+window.addEventListener('hashchange', () => {
+  if (history.state?.n == null) history.replaceState({ n: (stan.wpisHistorii ?? 0) + 1 }, '');
+  stan.wpisHistorii = history.state.n;
+  trasa();
+});
 $('wstecz').addEventListener('click', () => history.back());
+
+function historiaRodzicow() {
+  if (history.state?.n != null) { stan.wpisHistorii = history.state.n; return; }
+  const [ekran, idInwestycji] = location.hash.slice(1).split('/');
+  const baza = location.pathname + location.search;
+  const cel = location.hash;
+  history.replaceState({ n: 0 }, '', baza);
+  stan.wpisHistorii = 0;
+  if (!['i', 'p', 'w'].includes(ekran) || !idInwestycji) return;
+  if (ekran !== 'i') history.pushState({ n: ++stan.wpisHistorii }, '', `${baza}#i/${idInwestycji}`);
+  history.pushState({ n: ++stan.wpisHistorii }, '', baza + cel);
+}
 
 // --- Logowanie ---
 
@@ -609,7 +629,9 @@ function zamknijProtokol() {
   stan.protokol.dokument?.destroy();
   stan.protokol = null;
   renderujZdjecia();
-  document.body.classList.remove('tryb-wniosek', 'wniosek-zablokowany');
+  document.body.classList.remove('tryb-wniosek', 'wniosek-zablokowany', 'klawiatura-ilosci');
+  $('akcje-wniosku').hidden = true;
+  $('klawiatura-ilosci').setAttribute('aria-pressed', 'false');
 }
 
 function pokazKontakt(a) {
@@ -1068,6 +1090,7 @@ async function wniosekZDysku(rekord, a, klucz, typ) {
     instalacja: typ,
     wzor: kluczWzoru,
     zestaw: s.zestaw || s.wzor?.nazwa || null,
+    dodatkowe: s.dodatkowe || [],
     wartosci: s.wartosci || {},
     kreski: s.kreski || null,
     pola: s.pola || null,
@@ -1120,7 +1143,7 @@ function pokazWyborZestawu(otwarty, a, typ) {
   $('strony').append(el('div', { class: 'wybor-zestawu' },
     el('h2', {}, 'Wybierz zestaw'),
     el('p', {}, podpowiedz ? 'Pierwszy zestaw pasuje do pompy wpisanej w tabeli montażowej.' : 'Zestaw zostaje przy materiałówce po pierwszym zapisie.'),
-    ...kolejnosc.map(z => el('button', { type: 'button', class: `opcja${z === podpowiedz ? ' polecana' : ''}`, onclick: () => { location.hash = adresTrasy(z); } },
+    ...kolejnosc.map(z => el('button', { type: 'button', class: `opcja${z === podpowiedz ? ' polecana' : ''}`, onclick: () => { location.replace(`#${adresTrasy(z)}`); } },
       el('span', { class: 'tresc' }, el('strong', {}, bezPdf(z.nazwa)), el('small', {}, z === podpowiedz ? 'Pasuje do tabeli montażowej' : 'Zestaw z Dysku')),
       ikona('dalej', 'dalej')))
   ));
@@ -1180,6 +1203,7 @@ async function ekranWniosek(idInwestycji, idAdresu, typ, idZestawu) {
     return;
   }
   pokazEkran('ekran-protokol', { tytul: a.adres, podtytul: `Materiałówka ${rodzajWniosku(typ)} · ${bezPdf(zestaw)} · ${nazwaInwestycji}` });
+  document.body.classList.add('tryb-wniosek');
 
   rekord ||= {
     klucz,
@@ -1203,6 +1227,12 @@ async function ekranWniosek(idInwestycji, idAdresu, typ, idZestawu) {
   otwarty.strony = await tekstSzablonu(otwarty.dokument);
   otwarty.pola = polaZestawu(otwarty.strony);
   rekord.wartosci ||= wartosciPoczatkowe(otwarty.pola, { adres: a.adres, data: dataDzisiaj() });
+  // Ekipa z kolumny „Ekipa” tabeli montażowej, gdy jeszcze nie wpisana.
+  const ekipa = rekord.wiersze.map(r => ekipaZMontazowej(wierszeArkusza(r.arkusz), r.wiersz)).find(Boolean);
+  for (const p of otwarty.pola.filter(p => p.id === 'ekipa')) {
+    if (ekipa && !rekord.zatwierdzono && !String(rekord.wartosci[p.id] ?? '').trim()) rekord.wartosci[p.id] = ekipa;
+  }
+  ustawKlawiature(Boolean(await odczytaj('ustawienia', 'klawiaturaIlosci')));
   if (stan.protokol !== otwarty) return;
   otwarty.edytor = await utworzEdytor($('strony'), {
     dokument: otwarty.dokument,
@@ -1215,6 +1245,8 @@ async function ekranWniosek(idInwestycji, idAdresu, typ, idZestawu) {
   ustawPrzyciski();
   $('zapisz-protokol').disabled = false;
   $('zatwierdz-wniosek').disabled = false;
+  $('akcje-wniosku').hidden = false;
+  pokazDopisane(otwarty);
   ustawBlokade(otwarty);
   if (!otwarty.pola.some(p => p.rodzaj === 'ilosc')) uwaga ||= 'W tym PDF nie rozpoznałem tabeli pozycji (wiersza z „Nazwa”) – ilości nie trafią do Materiałówki.';
   if (!rekord.zatwierdzono && uwaga) pokazUwage('komunikat', uwaga, { neutralna: true });
@@ -1232,7 +1264,30 @@ function polaNaStronach(otwarty) {
     // Ilość pisze się rysikiem - tylko lekkie podświetlenie miejsca.
     if (p.rodzaj === 'ilosc') {
       const h = p.h || 19;
-      s.div.append(el('div', { class: 'miejsce-ilosci', style: `left:${proc(p.x, s.szer)};width:${proc(p.w, s.szer)};top:${proc(s.wys - p.y - 5 - h / 2, s.wys)};height:${proc(h, s.wys)}` }));
+      const polozenie = `left:${proc(p.x, s.szer)};width:${proc(p.w, s.szer)};top:${proc(s.wys - p.y - 5 - h / 2, s.wys)};height:${proc(h, s.wys)}`;
+      s.div.append(el('div', { class: 'miejsce-ilosci', style: polozenie }));
+      // Tryb „Ilości z klawiatury”: pole na komórce, podpowiedź = obecna ilość.
+      const wejscie = el('input', {
+        class: 'ilosc-klawiatura', type: 'text', inputmode: 'decimal', enterkeyhint: 'next', autocomplete: 'off',
+        'aria-label': `Ilość: ${p.etykieta}`, title: p.etykieta,
+        style: `${polozenie};font-size:${(Math.min(8, h - 1.5) / s.szer * 100).toFixed(3)}cqw`,
+        oninput: e => {
+          otwarty.rekord.wartosci[p.id] = e.target.value;
+          e.target.classList.toggle('wpisana', Boolean(e.target.value.trim()));
+          zapiszSzkic(otwarty, otwarty.edytor.kreski);
+        },
+        onkeydown: e => {
+          if (e.key !== 'Enter') return;
+          e.preventDefault();
+          const nastepne = otwarty.ilosciKlawiatura[otwarty.ilosciKlawiatura.indexOf(e.target) + 1];
+          if (nastepne) nastepne.focus(); else e.target.blur();
+        }
+      });
+      wejscie.value = recznaIlosc(p, otwarty.rekord.wartosci);
+      wejscie.placeholder = iloscKoncowa(p, otwarty.rekord.odczyt);
+      wejscie.classList.toggle('wpisana', Boolean(wejscie.value));
+      s.div.append(wejscie);
+      (otwarty.ilosciKlawiatura ||= []).push(wejscie);
       continue;
     }
     const wejscie = el('input', {
@@ -1267,10 +1322,11 @@ function polaNaStronach(otwarty) {
 function ustawBlokade(otwarty) {
   const zablokowany = Boolean(otwarty.rekord.zatwierdzono);
   otwarty.edytor.ustawTylkoOdczyt(zablokowany);
-  for (const w of otwarty.wejscia || []) w.readOnly = zablokowany;
+  for (const w of [...(otwarty.wejscia || []), ...(otwarty.ilosciKlawiatura || [])]) w.readOnly = zablokowany;
   document.body.classList.toggle('wniosek-zablokowany', zablokowany);
   $('zapisz-protokol').hidden = zablokowany;
   $('zatwierdz-wniosek').hidden = zablokowany;
+  $('usun-wniosek').hidden = zablokowany;
   if (zablokowany) {
     pokazUwage('komunikat', `Materiałówka zatwierdzona ${dataCzytelna(otwarty.rekord.zatwierdzono)} – tylko do podglądu.`, { neutralna: true, znak: 'klodka' });
   }
@@ -1279,10 +1335,14 @@ function ustawBlokade(otwarty) {
 const wartoscPola = (otwarty, p) => String(otwarty.rekord.wartosci[p.id] ?? '').trim();
 
 function tekstyWniosku(otwarty, zatwierdzono) {
-  // Ilości są w PDF pismem z rysika - bez dopisywania odczytu.
+  // Ilości pisane rysikiem są w PDF pismem; wpisane z klawiatury - tekstem
+  // w prawej części komórki (wydrukowana liczba przekreślona, kreskiWniosku).
   const teksty = otwarty.pola.filter(p => p.rodzaj !== 'ilosc' && wartoscPola(otwarty, p)).map(p => ({
     strona: p.strona, x: p.x + 2, y: p.y + 2, tekst: wartoscPola(otwarty, p), rozmiar: ROZMIAR_WPISU, maxSzer: Math.max(p.w - 4, 12)
   }));
+  for (const p of otwarty.pola.filter(p => p.rodzaj === 'ilosc' && recznaIlosc(p, otwarty.rekord.wartosci))) {
+    teksty.push({ strona: p.strona, x: p.x + p.w * 0.62, y: p.y + 2, tekst: recznaIlosc(p, otwarty.rekord.wartosci), rozmiar: 8, maxSzer: p.w * 0.36 });
+  }
   // Pieczątka w prawym górnym rogu pierwszej strony - widać ją w podglądzie Dysku.
   const pierwsza = otwarty.strony[0];
   if (zatwierdzono && pierwsza) {
@@ -1291,50 +1351,243 @@ function tekstyWniosku(otwarty, zatwierdzono) {
   return teksty;
 }
 
+// Przekreślenie wydrukowanej ilości tam, gdzie wpisano ją z klawiatury.
+function kreskiWniosku(otwarty) {
+  const kreski = (otwarty.edytor.kreski || []).map(k => [...(k || [])]);
+  for (const p of otwarty.pola.filter(p => p.rodzaj === 'ilosc' && p.wydrukowano && recznaIlosc(p, otwarty.rekord.wartosci))) {
+    const y = otwarty.strony[p.strona].wys - p.y - 5;
+    while (kreski.length <= p.strona) kreski.push([]);
+    kreski[p.strona].push({ kolor: '#c62828', rozmiar: 0.9, rysik: true, punkty: [[p.x + 4, y, 0.5], [p.x + p.w * 0.58, y, 0.5]] });
+  }
+  return kreski;
+}
+
+// Pozycje dopisane spoza zestawu - lista na przycisku i okno dopisywania.
+function pokazDopisane(otwarty) {
+  const ile = otwarty.rekord.dodatkowe?.length || 0;
+  $('dopisz-pozycje').textContent = ile ? `+ Dopisane pozycje (${ile})` : '+ Dopisz pozycję';
+  const zablokowany = Boolean(otwarty.rekord.zatwierdzono);
+  $('lista-dopisanych').replaceChildren(...(otwarty.rekord.dodatkowe || []).map((d, i) => el('li', {},
+    el('span', {}, d.nazwa), el('strong', {}, d.ilosc),
+    !zablokowany && el('button', { type: 'button', onclick: () => {
+      otwarty.rekord.dodatkowe.splice(i, 1);
+      zapiszSzkic(otwarty, otwarty.edytor.kreski);
+      pokazDopisane(otwarty);
+    } }, 'Usuń'))));
+}
+
+$('dopisz-pozycje').addEventListener('click', () => {
+  const otwarty = stan.protokol;
+  if (!otwarty?.edytor) return;
+  pokazDopisane(otwarty);
+  $('dopisz-nazwa').value = '';
+  $('dopisz-ilosc').value = '';
+  $('dialog-dopisane').showModal();
+  $('dopisz-nazwa').focus();
+});
+
+function dodajDopisana() {
+  const otwarty = stan.protokol;
+  const nazwa = $('dopisz-nazwa').value.trim();
+  const ilosc = $('dopisz-ilosc').value.trim();
+  if (!otwarty?.edytor || !nazwa || !ilosc) { (nazwa ? $('dopisz-ilosc') : $('dopisz-nazwa')).focus(); return; }
+  (otwarty.rekord.dodatkowe ||= []).push({ nazwa, ilosc });
+  zapiszSzkic(otwarty, otwarty.edytor.kreski);
+  pokazDopisane(otwarty);
+  $('dopisz-nazwa').value = '';
+  $('dopisz-ilosc').value = '';
+  $('dopisz-nazwa').focus();
+}
+$('dopisz-dodaj').addEventListener('click', dodajDopisana);
+$('dopisz-nazwa').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('dopisz-ilosc').focus(); } });
+$('dopisz-ilosc').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); dodajDopisana(); } });
+
+// Tryb klawiatury zapamiętany w tablecie - kto wpisuje z klawiatury, ma go od razu.
+function ustawKlawiature(wlaczona) {
+  document.body.classList.toggle('klawiatura-ilosci', wlaczona);
+  $('klawiatura-ilosci').setAttribute('aria-pressed', String(wlaczona));
+}
+$('klawiatura-ilosci').addEventListener('click', () => {
+  const wlaczona = !document.body.classList.contains('klawiatura-ilosci');
+  ustawKlawiature(wlaczona);
+  zapisz('ustawienia', 'klawiaturaIlosci', wlaczona).catch(() => {});
+  if (wlaczona) toast('Kliknij ilość w kolumnie i wpisz ją z klawiatury. Puste pole = ilość z pisma albo wydruku.', { czas: 5000 });
+});
+
+// Usunięcie niezatwierdzonej materiałówki: PDF z Dysku do kosza, wiersze
+// adresu z Materiałówki, data wydania z tabeli montażowej, rekord z tabletu.
+$('usun-wniosek').addEventListener('click', async () => {
+  const otwarty = stan.protokol;
+  if (!otwarty?.edytor || otwarty.rekord.zatwierdzono) return;
+  const rekord = otwarty.rekord;
+  const wyslana = Boolean(rekord.drive?.id || rekord.status === 'wyslany');
+  if (wyslana && !navigator.onLine) { toast('Do usunięcia zapisanej materiałówki potrzebny jest internet.', { typ: 'blad', czas: 6000 }); return; }
+  if (!confirm(wyslana
+    ? `Usunąć materiałówkę ${rekord.adres}? PDF trafi do kosza na Dysku, pozycje adresu znikną z Materiałówki, a data wydania z tabeli montażowej.`
+    : `Usunąć materiałówkę ${rekord.adres}? Pismo i wpisane ilości znikną z tabletu.`)) return;
+  const trwa = toast('Usuwam materiałówkę…', { czas: 0 });
+  try {
+    const uwagi = navigator.onLine ? await usunWniosekZDysku(rekord) : [];
+    clearTimeout(czasAutozapisu);
+    await usun('audyty', rekord.klucz);
+    stan.audyty.delete(rekord.klucz);
+    trwa.remove();
+    toast('Usunięto materiałówkę.', { typ: 'ok' });
+    for (const u of uwagi) toast(u, { typ: 'blad', czas: 15000 });
+    zamknijProtokol();
+    history.back();
+  } catch (blad) {
+    console.error(blad);
+    trwa.remove();
+    toast(`Nie udało się usunąć materiałówki: ${blad.message}`, { typ: 'blad', czas: 10000 });
+  }
+});
+
+async function usunWniosekZDysku(rekord) {
+  const uwagi = [];
+  const inw = await odczytaj('inwestycje', rekord.inwestycja);
+  const a = stan.wynik?.adresy.find(x => x.id === rekord.adresId);
+  const plik = (rekord.drive?.id && await google.metadanePliku(rekord.drive.id)) || (a && await znajdzWniosekNaDysku(a, rekord.instalacja));
+  if (plik && !await google.doKosza(plik.id, `USUNIĘTA – ${plik.name}`)) {
+    uwagi.push(`To konto nie może usuwać plików z Dysku – PDF ma teraz nazwę „USUNIĘTA – ${plik.name}”, biuro może go skasować.`);
+  }
+  const mat = inw.materialowki?.rodzaje?.[rekord.instalacja];
+  if (mat?.tabela) {
+    const id = mat.tabela.id;
+    const arkusze = await google.arkuszeTabeli(id);
+    const tytul = arkuszMaterialowki(arkusze.map(x => x.title), rodzajWniosku(rekord.instalacja));
+    if (tytul) {
+      const arkusz = arkusze.find(x => x.title === tytul);
+      const { doUsuniecia } = zmianyMaterialowki({ arkusz: tytul, wiersze: await google.wartosciArkusza(id, tytul), nowe: [], adres: rekord.adres });
+      const bloki = blokiDoUsuniecia(doUsuniecia);
+      if (bloki.length) await google.zmianyTabeli(id, bloki.map(b => ({ deleteDimension: { range: { sheetId: arkusz.sheetId, dimension: 'ROWS', startIndex: b.start, endIndex: b.koniec } } })));
+    }
+  }
+  // Data wydania w tabeli montażowej - błąd nie blokuje usunięcia.
+  if (inw.tabela.mimeType === google.MIME.arkusz) {
+    for (const cel of rekord.wiersze || []) {
+      try {
+        const wiersze = await google.wartosciArkusza(inw.tabela.id, cel.arkusz);
+        const nr = znajdzWiersz(wiersze, cel);
+        const { dane, kolumna } = nr ? wyczyscWydanie({ arkusz: cel.arkusz, wiersze, nrWiersza: nr }) : { dane: [], kolumna: -1 };
+        if (dane.length) await google.zapiszKomorki(inw.tabela.id, dane);
+        // Kopia tabeli w tablecie - status na liście adresów od razu bez materiałówki.
+        const lokalne = wierszeArkusza(cel.arkusz)[cel.wiersz - 1];
+        if (lokalne && kolumna >= 0) lokalne[kolumna] = '';
+      } catch (blad) {
+        console.warn(blad);
+        uwagi.push(`Nie wyczyściłem daty wydania w tabeli montażowej (${blad.status === 403 ? 'brak uprawnień do edycji' : blad.message}).`);
+      }
+    }
+    if (stan.inwestycja?.id === inw.id) await zapisz('inwestycje', inw.id, stan.inwestycja);
+  }
+  return uwagi;
+}
+
+// Zmiana zestawu (także po zapisie, przed zatwierdzeniem): pismo i ilości
+// z poprzedniego zestawu nie pasują do nowego - znikają; ekipa, adres, data
+// i dopisane pozycje zostają. Plik na Dysku podmieniany przy następnym zapisie.
+$('zmien-zestaw').addEventListener('click', async () => {
+  const otwarty = stan.protokol;
+  if (!otwarty?.edytor || otwarty.rekord.zatwierdzono) return;
+  const rekord = otwarty.rekord;
+  const coKolwiek = (otwarty.edytor.kreski || []).some(k => k?.length) || otwarty.pola.some(p => p.rodzaj === 'ilosc' && recznaIlosc(p, rekord.wartosci));
+  if (coKolwiek && !confirm('Zmienić zestaw? Pismo i ilości wpisane na tym zestawie zostaną usunięte (ekipa, data i dopisane pozycje zostają).')) return;
+  const naglowek = new Set(otwarty.pola.filter(p => p.rodzaj !== 'ilosc').map(p => p.id));
+  Object.assign(rekord, {
+    wzor: null, zestaw: null, kreski: null, odczyt: null, pola: null, rozmiaryStron: null,
+    wartosci: Object.fromEntries(Object.entries(rekord.wartosci || {}).filter(([id]) => naglowek.has(id)))
+  });
+  await zapiszRekord(rekord);
+  const cel = `#w/${encodeURIComponent(rekord.inwestycja)}/${encodeURIComponent(rekord.adresId)}/${rekord.instalacja}`;
+  zamknijProtokol();
+  if (location.hash === cel) trasa(); else location.hash = cel;
+});
+
 // Pola i rozmiary stron zapisywane w rekordzie (i w PDF) - z nich odczyt
 // pisma działa także po wczytaniu wniosku na innym urządzeniu.
 const polaRekordu = otwarty => otwarty.pola.map(({ id, etykieta, material, lp, wydrukowano, sekcja, rodzaj, strona, x, y, w, h }) => ({ id, etykieta, material, lp, wydrukowano, sekcja, rodzaj, strona, x, y, w, h }));
 const rozmiaryStron = otwarty => otwarty.strony.map(s => ({ szer: s.szer, wys: s.wys }));
 
-async function potwierdzZatwierdzenie(otwarty) {
+// Odczyt pisma przed zapisem/zatwierdzeniem, z poprawianiem na miejscu: przy
+// każdej ilości napisanej rysikiem wycinek pisma, odczyt w polu do zmiany
+// i (gdy AI się waha) przyciski z drugim możliwym odczytem - bez wracania do
+// kartki. Wartości pokazane i potwierdzone tu nie są już „do sprawdzenia”.
+// Zapis pyta tylko, gdy coś jest niepewne; zatwierdzenie pyta zawsze.
+async function sprawdzOdczyt(otwarty, { zatwierdz }) {
   const rekord = otwarty.rekord;
   const opis = $('dialog-zatwierdz-opis');
   const pozycje = otwarty.pola.filter(p => p.rodzaj === 'ilosc');
   opis.replaceChildren();
+  const kopia = { ...rekord, pola: polaRekordu(otwarty), rozmiaryStron: rozmiaryStron(otwarty), kreski: otwarty.edytor.kreski };
+  let odczyt = null;
+  let uwaga = '';
   if (pozycje.length && navigator.onLine) {
-    // Odczyt na świeżym piśmie - szef widzi, co trafi do tabeli, zanim zatwierdzi.
-    const kopia = { ...rekord, pola: polaRekordu(otwarty), rozmiaryStron: rozmiaryStron(otwarty), kreski: otwarty.edytor.kreski };
     const trwa = toast('Odczytuję ilości…', { czas: 0 });
     try {
-      const odczyt = await odczytajPismo(kopia);
+      odczyt = await odczytajPismo(kopia);
       rekord.odczyt = odczyt;
-      const odczytane = pozycje.filter(p => p.id in odczyt.wartosci);
-      const zIloscia = pozycje.filter(p => !['', '0'].includes(iloscKoncowa(p, odczyt))).length;
-      wstaw(opis, [
-        el('p', {}, `Do Materiałówki trafi ${zIloscia} pozycji z ilością. ` + (odczytane.length ? `Poprawki rysikiem (${odczytane.length}) – porównaj z tym, co napisałeś:` : 'Bez poprawek rysikiem – ilości z wydruku.')),
-        odczytane.length > 0 && el('ul', { class: 'odczyty' }, odczytane.map(p => el('li', { class: odczyt.niepewne.includes(p.id) ? 'niepewny' : '' },
-          el('span', {}, p.etykieta), el('strong', {}, `${p.wydrukowano ? `${p.wydrukowano} → ` : ''}${odczyt.wartosci[p.id] || '?'}${odczyt.niepewne.includes(p.id) ? ' – do sprawdzenia' : ''}`))))
-      ]);
     } catch (blad) {
       console.warn(blad);
-      wstaw(opis, [el('p', { class: 'uwaga-odczytu' }, `Nie udało się teraz odczytać ilości (${blad.message}). Odczytają się przy wysyłce.`)]);
+      uwaga = `Nie udało się teraz odczytać ilości (${blad.message}). Odczytają się przy wysyłce.`;
     } finally {
       trwa.remove();
     }
   } else if (pozycje.length) {
-    wstaw(opis, [el('p', { class: 'uwaga-odczytu' }, 'Brak internetu – ilości odczytają się przy wysyłce.')]);
+    uwaga = 'Brak internetu – ilości odczytają się przy wysyłce.';
   }
   if (stan.protokol !== otwarty) return false;
+  const reczne = rekord.wartosci || {};
+  const odczytane = odczyt ? pozycje.filter(p => p.id in odczyt.wartosci && !recznaIlosc(p, reczne)) : [];
+  const czyNiepewne = p => odczyt.niepewne.includes(p.id);
+  const niepewne = odczytane.filter(czyNiepewne);
+  if (!zatwierdz && !niepewne.length) return true;
+
+  const przypisane = przypiszKreski(kopia.pola, kopia.kreski, kopia.rozmiaryStron.map(s => s.wys));
+  const wejscia = new Map();
+  // Tylko pozycje, których odczytu AI nie jest pewne - pewne nie zajmują miejsca.
+  const wiersze = await Promise.all(niepewne.map(async p => {
+    const pole = kopia.pola.find(x => x.id === p.id);
+    const obraz = await wycinekPola(pole, przypisane.get(p.id) || [], kopia.rozmiaryStron[pole.strona].wys).catch(() => null);
+    const wejscie = el('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', class: 'popraw-ilosc', 'aria-label': `Ilość: ${p.etykieta}` });
+    wejscie.value = odczyt.wartosci[p.id] ?? '';
+    wejscia.set(p.id, wejscie);
+    const propozycje = [...new Set([odczyt.wartosci[p.id], odczyt.alternatywy?.[p.id]].filter(Boolean))];
+    return el('li', { class: 'niepewny' },
+      el('span', { class: 'odczyt-nazwa' }, el('span', {}, p.etykieta), el('small', {}, p.wydrukowano ? `wydrukowano: ${p.wydrukowano}` : 'bez wydrukowanej ilości')),
+      obraz && el('img', { class: 'odczyt-pismo', src: `data:image/png;base64,${obraz}`, alt: 'Napisane rysikiem' }),
+      el('span', { class: 'odczyt-wybor' },
+        propozycje.length > 1 && propozycje.map(v => el('button', { type: 'button', class: 'propozycja', onclick: () => { wejscie.value = v; } }, v)),
+        wejscie));
+  }));
+  if (stan.protokol !== otwarty) return false;
+  wstaw(opis, [
+    uwaga && el('p', { class: 'uwaga-odczytu' }, uwaga),
+    niepewne.length > 0 && el('p', {}, `Do sprawdzenia: ${niepewne.length}. Popraw tutaj, jeśli odczyt się nie zgadza – nie trzeba wracać do kartki.`),
+    wiersze.length > 0 && el('ul', { class: 'odczyty' }, wiersze)
+  ]);
+  $('dialog-zatwierdz-tytul').textContent = zatwierdz ? 'Zatwierdzić materiałówkę?' : 'Sprawdź odczytane ilości';
+  $('dialog-zatwierdz-info').hidden = !zatwierdz;
+  $('dialog-zatwierdz-ok').textContent = zatwierdz ? 'Zatwierdź' : 'Zapisz';
+  $('dialog-zatwierdz-ok').className = `btn ${zatwierdz ? 'btn-zatwierdz' : 'btn-zapisz'}`;
   const okno = $('dialog-zatwierdz');
   okno.returnValue = '';
   okno.showModal();
-  return new Promise(ok => okno.addEventListener('close', () => ok(okno.returnValue === 'ok'), { once: true }));
+  const ok = await new Promise(r => okno.addEventListener('close', () => r(okno.returnValue === 'ok'), { once: true }));
+  if (!ok) return false;
+  // Pokazane wartości sprawdził człowiek - już nie „do sprawdzenia”.
+  for (const [id, wejscie] of wejscia) {
+    odczyt.wartosci[id] = wejscie.value.trim();
+    odczyt.niepewne = odczyt.niepewne.filter(x => x !== id);
+  }
+  rekord.odczyt = odczyt || rekord.odczyt;
+  return true;
 }
 
 async function zapiszWniosek(otwarty, { zatwierdz = false } = {}) {
   const rekord = otwarty.rekord;
   if (!otwarty.edytor || rekord.zatwierdzono) return;
-  if (zatwierdz && (!await potwierdzZatwierdzenie(otwarty) || stan.protokol !== otwarty)) return;
+  if (!await sprawdzOdczyt(otwarty, { zatwierdz }) || stan.protokol !== otwarty) return;
   document.activeElement?.blur?.();
   const przyciski = [$('zapisz-protokol'), $('zatwierdz-wniosek')];
   for (const p of przyciski) p.disabled = true;
@@ -1353,6 +1606,7 @@ async function zapiszWniosek(otwarty, { zatwierdz = false } = {}) {
       instalacja: rekord.instalacja,
       adres: rekord.adres,
       zestaw: rekord.zestaw,
+      dodatkowe: rekord.dodatkowe || [],
       wzor: { klucz: rekord.wzor, nazwa: otwarty.szablon.nazwa, modifiedTime: otwarty.szablon.modifiedTime || null },
       wartosci: rekord.wartosci,
       kreski,
@@ -1368,7 +1622,10 @@ async function zapiszWniosek(otwarty, { zatwierdz = false } = {}) {
       czcionka: await (await fetch('vendor/DejaVuSansCondensed.ttf')).arrayBuffer(),
       fontkit: window.fontkit,
       teksty: tekstyWniosku(otwarty, zatwierdzono),
-      kreski,
+      kreski: kreskiWniosku(otwarty),
+      dodatkoweStrony: rekord.dodatkowe?.length
+        ? [{ tytul: `Pozycje dopisane spoza zestawu – ${rekord.adres}`, linie: rekord.dodatkowe.map((d, i) => `${i + 1}. ${d.nazwa} – ${d.ilosc}`) }]
+        : [],
       tytul: nazwa.replace(/\.pdf$/, ''),
       zalaczniki: zalacznikiStanu(stanDoEdycji, otwarty.szablon.bajty)
     });
@@ -1432,7 +1689,8 @@ async function kluczOdczytu({ pytaj = false } = {}) {
 async function odczytajPismo(rekord) {
   const pola = rekord.pola || [];
   const wysokosci = (rekord.rozmiaryStron || []).map(s => s.wys);
-  const przypisane = przypiszKreski(pola, rekord.kreski, wysokosci);
+  // Pola z ilością wpisaną z klawiatury nie idą do odczytu.
+  const przypisane = new Map([...przypiszKreski(pola, rekord.kreski, wysokosci)].filter(([id]) => !String(rekord.wartosci?.[id] ?? '').trim()));
   const podpis = podpisPisma(przypisane);
   if (rekord.odczyt?.podpis === podpis) return rekord.odczyt;
   const zPismem = pola.filter(p => p.rodzaj === 'ilosc' && przypisane.has(p.id));
@@ -1454,12 +1712,14 @@ async function odczytajPismo(rekord) {
   }
   const wartosci = {};
   const niepewne = [];
+  const alternatywy = {};
   zPismem.forEach((p, i) => {
     const w = wyniki.get(i + 1);
     wartosci[p.id] = w?.odczyt || '';
+    if (w?.alternatywa && w.alternatywa !== w.odczyt) alternatywy[p.id] = w.alternatywa;
     if (!w?.odczyt || w.pewnosc !== 'wysoka') niepewne.push(p.id);
   });
-  rekord.odczyt = { podpis, wartosci, niepewne };
+  rekord.odczyt = { podpis, wartosci, niepewne, alternatywy };
   return rekord.odczyt;
 }
 
@@ -1481,7 +1741,7 @@ async function wpiszWniosek(rekord) {
     }
     await zapiszMaterialowke(mat.tabela.id, rodzaj, {
       adres: rekord.adres,
-      nowe: wierszeMaterialowki({ pola: rekord.pola || [], odczyt, adres: rekord.adres, zestaw: bezPdf(rekord.zestaw), zapisano: rekord.zmieniono, zatwierdzono: rekord.zatwierdzono })
+      nowe: wierszeMaterialowki({ pola: rekord.pola || [], odczyt, reczne: rekord.wartosci, dodatkowe: rekord.dodatkowe, adres: rekord.adres, zestaw: bezPdf(rekord.zestaw), zapisano: rekord.zmieniono, zatwierdzono: rekord.zatwierdzono })
     });
   } catch (blad) {
     if (blad.status === 403) throw new Error('to konto nie może edytować arkusza „Materiałówka” – biuro musi dać uprawnienia „Edytujący”');
@@ -1569,6 +1829,7 @@ async function start() {
   } catch (blad) {
     console.warn('Nie odczytano danych z pamięci tabletu', blad);
   }
+  historiaRodzicow();
   trasa();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register(`sw.js?v=${encodeURIComponent(WERSJA_APLIKACJI)}`).catch(blad => console.warn('Service worker', blad));
 }
@@ -1583,7 +1844,7 @@ async function poAktualizacji() {
   if (!poprzednia && !stan.inwestycje.length) return; // pierwsze uruchomienie na tym tablecie
   google.wyloguj();
   stan.poAktualizacji = true;
-  history.replaceState(null, '', location.pathname + location.search);
+  history.replaceState({ n: 0 }, '', location.pathname + location.search);
 }
 
 // Aplikacja otwarta długo (tablet tylko usypiany): po powrocie sprawdzamy,

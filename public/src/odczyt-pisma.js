@@ -100,11 +100,12 @@ const SCHEMAT = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['nr', 'odczyt', 'pewnosc', 'uwagi'],
+        required: ['nr', 'odczyt', 'pewnosc', 'alternatywa', 'uwagi'],
         properties: {
           nr: { type: 'integer' },
           odczyt: { type: 'string' },
           pewnosc: { type: 'string', enum: ['wysoka', 'srednia', 'niska'] },
+          alternatywa: { type: 'string' },
           uwagi: { type: 'string' }
         }
       }
@@ -124,7 +125,8 @@ Zasady:
 - Gdy w polu jest coś innego niż liczba (np. "2x5", "-", słowo), przepisz to dosłownie.
 - Gdy pismo jest przekreślone albo zamazane i nie da się ustalić wartości, zwróć pusty odczyt i pewnosc "niska" z opisem w uwagach.
 - Pismo jest polskie: "1" bywa z długim daszkiem (podobna do "Λ" albo "/1"), "7" ma poprzeczkę, "4" bywa otwarta, "0" bywa niedomknięte.
-- pewnosc: "wysoka", gdy znaki są jednoznaczne; "srednia" albo "niska", gdy możliwe jest inne odczytanie - wtedy podaj je w uwagach (np. "może 7").
+- pewnosc: "wysoka", gdy znaki są jednoznaczne; "srednia" albo "niska", gdy możliwe jest inne odczytanie.
+- alternatywa: drugie możliwe odczytanie, sama wartość (np. "7", gdy napisane "1" przypomina 7); pusty tekst, gdy innego odczytania nie ma.
 
 Zwróć jeden wpis na każdy numer pola.`;
 
@@ -153,7 +155,7 @@ export async function odczytajIlosci({ klucz, pola }) {
   if (odp.stop_reason === 'refusal') throw new Error('odczyt pisma odrzucony');
   if (odp.stop_reason === 'max_tokens') throw new Error('odpowiedź odczytu ucięta');
   const json = JSON.parse(odp.content.filter(b => b.type === 'text').map(b => b.text).join(''));
-  return new Map(json.pola.map(p => [p.nr, { odczyt: p.odczyt.trim(), pewnosc: p.pewnosc, uwagi: p.uwagi }]));
+  return new Map(json.pola.map(p => [p.nr, { odczyt: p.odczyt.trim(), pewnosc: p.pewnosc, alternatywa: String(p.alternatywa || '').trim(), uwagi: p.uwagi }]));
 }
 
 // Rozpoznanie błędów SDK dla komunikatów (klasy z tego samego modułu co klient).

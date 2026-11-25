@@ -7,8 +7,9 @@ import { obrysKreski, sciezkaSvg, kolorRgb, KOLORY } from './atrament.js';
 // teksty: wynik wyliczWpisy (y od dołu strony),
 // kreski: [[kreska, ...] na stronę] (y od góry strony),
 // fontkit: window.fontkit w przeglądarce, moduł @pdf-lib/fontkit w testach,
-// zalaczniki: [{ nazwa, bajty, mimeType, opis }] - pliki osadzone w PDF.
-export async function zbudujPdf({ szablon, czcionka, fontkit, teksty, kreski, tytul, zalaczniki = [] }) {
+// zalaczniki: [{ nazwa, bajty, mimeType, opis }] - pliki osadzone w PDF,
+// dodatkoweStrony: [{ tytul, linie: [tekst] }] - strony dopisane na końcu (A4).
+export async function zbudujPdf({ szablon, czcionka, fontkit, teksty, kreski, tytul, zalaczniki = [], dodatkoweStrony = [] }) {
   const pdf = await PDFDocument.load(szablon);
   pdf.registerFontkit(fontkit);
   // Własna czcionka, bo standardowe czcionki PDF nie mają "ą, ę, ł...".
@@ -38,6 +39,22 @@ export async function zbudujPdf({ szablon, czcionka, fontkit, teksty, kreski, ty
       strona.drawSvgPath(d, { x: x0, y: y0 + height, color: rgb(kr, kg, kb), borderWidth: 0 });
     }
   });
+
+  for (const d of dodatkoweStrony) {
+    let strona = null;
+    let y = 0;
+    const nowa = () => {
+      strona = pdf.addPage([595.28, 841.89]);
+      strona.drawText(d.tytul, { x: 50, y: 790, size: 13, font, color: rgb(0, 0, 0) });
+      y = 760;
+    };
+    nowa();
+    for (const linia of d.linie) {
+      if (y < 50) nowa();
+      strona.drawText(linia, { x: 50, y, size: 10.5, font, color: rgb(r, g, b), maxWidth: 495 });
+      y -= 18;
+    }
+  }
 
   for (const z of zalaczniki) {
     await pdf.attach(z.bajty, z.nazwa, { mimeType: z.mimeType, description: z.opis });
