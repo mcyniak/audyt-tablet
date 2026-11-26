@@ -17,16 +17,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  publikacja:
+  # Osobne zadania: deploy-pages w tym samym zadaniu co upload czasem nie widzi
+  # jeszcze artefaktu („No artifacts named github-pages”).
+  budowa:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.wdrozenie.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public
+
+  publikacja:
+    needs: budowa
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.wdrozenie.outputs.page_url }}
+    steps:
       - id: wdrozenie
         uses: actions/deploy-pages@v4
