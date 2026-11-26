@@ -4,7 +4,7 @@ import { odczytaj, zapisz, usun, wszystkie } from './src/magazyn.js';
 import { wyliczWpisy, tekstSzablonu } from './src/wypelnianie.js';
 import { utworzEdytor } from './src/edytor.js';
 import { zbudujPdf } from './src/eksport.js';
-import { wybierzWzor } from './src/wzory.js';
+import { wybierzWzor, rozpoznajWzor } from './src/wzory.js';
 import { PYTANIA_PV, kolumnyPytan, odpowiedziZWiersza, znajdzWiersz, zmianyWiersza, pytaniaNaWzorze, odpowiedziZProtokolu } from './src/ankieta.js';
 import { polaZestawu, wartosciPoczatkowe, iloscKoncowa, recznaIlosc, wierszeMaterialowki, zmianyMaterialowki, arkuszMaterialowki, datyWMontazowej, datyZMontazowej, wyczyscWydanie, ekipaZMontazowej, podpowiedzZestawu, blokiDoUsuniecia, dataCzytelna, zalacznikiStanu, stanZPdf } from './src/wniosek.js';
 import { zakres } from './src/tabela-materialowa.js';
@@ -18,6 +18,13 @@ pdfjs.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.mjs';
 const TYP = Object.fromEntries(TYPY.map(t => [t.id, t]));
 const SKROT_PLIKU = { pompy: 'PC', pv_me: 'PV', solary: 'KOLEKTORY', kotly: 'KOTŁY' };
 
+// Dwie osobne aplikacje z jednego kodu - korzystają z nich inne osoby:
+//   Audyty       – …/audyt-tablet/                      (audytorzy w terenie)
+//   Materiałówki – …/audyt-tablet/?app=materialowki      (magazyn; skrót …/materialowki/)
+// Każda ma własny manifest (nazwa i ikona na tablecie) i nie pokazuje
+// ekranów, przełącznika ani liczników drugiej.
+const MATERIALOWKI = new URLSearchParams(location.search).get('app') === 'materialowki';
+
 // Stan aplikacji. Lista inwestycji, otwarte inwestycje (tabela + wzory) i
 // protokoły są w IndexedDB - aplikacja działa w terenie bez internetu.
 const stan = {
@@ -26,7 +33,7 @@ const stan = {
   inwestycja: null, // otwarta: { id, nazwa, tabela, arkusze, wzory, folderWzorow, pobrano }
   wynik: null, // zbudujListeAdresow dla otwartej inwestycji
   audyty: new Map(), // klucz protokołu/wniosku -> { status, inwestycja, typ, zatwierdzono }
-  tryb: 'audyty', // lista adresów: 'audyty' albo 'wnioski' (wnioski materiałowe)
+  tryb: MATERIALOWKI ? 'wnioski' : 'audyty', // stały dla aplikacji: audyty albo wnioski (materiałówki)
   szukajInwestycji: '',
   szukajAdresu: '',
   filtrTypu: null,
@@ -133,6 +140,9 @@ async function trasa() {
   const [ekran, ...p] = location.hash.slice(1).split('/').map(decodeURIComponent);
   if (ekran !== 'p' && ekran !== 'w') zamknijProtokol();
   if (stan.czekaAktualizacja && ekran !== 'p' && ekran !== 'w') { location.reload(); return; }
+  // Link do ekranu drugiej aplikacji (protokół w Materiałówkach, materiałówka
+  // w Audytach) - tylko lista adresów tej inwestycji.
+  if ((ekran === 'p' && MATERIALOWKI) || (ekran === 'w' && !MATERIALOWKI)) { location.replace(`#i/${encodeURIComponent(p[0] || '')}`); return; }
   try {
     if (ekran === 'i') return await ekranAdresy(p[0]);
     if (ekran === 'p') return await ekranProtokol(p[0], p[1], p[2]);
@@ -192,12 +202,13 @@ async function pobierzInwestycje() {
   await zapisz('ustawienia', 'inwestycje', stan.inwestycje);
 }
 
-// Ile adresów inwestycji ma już zapisany protokół.
+// Ile adresów inwestycji ma już zapisany protokół (Audyty) albo zatwierdzoną
+// materiałówkę (Materiałówki) - każda aplikacja liczy tylko swoje.
 function zrobione(idInwestycji) {
   const adresy = new Set();
   for (const [klucz, a] of stan.audyty) {
-    if (a.typ === 'wniosek') continue;
-    if (a.inwestycja === idInwestycji && (a.status === 'zapisany' || a.status === 'wyslany')) adresy.add(klucz.split('|')[1]);
+    if ((a.typ === 'wniosek') !== MATERIALOWKI || a.inwestycja !== idInwestycji) continue;
+    if (MATERIALOWKI ? a.zatwierdzono : (a.status === 'zapisany' || a.status === 'wyslany')) adresy.add(klucz.split('|')[1]);
   }
   return adresy.size;
 }
@@ -232,9 +243,11 @@ function kartaInwestycji(inw) {
   return el('button', { type: 'button', class: 'karta', onclick: () => { location.hash = `i/${encodeURIComponent(inw.id)}`; } },
     el('span', { class: 'karta-nazwa' }, glowna),
     typy.length > 0 && el('span', { class: 'karta-typy' }, typy.map(t => el('span', { class: 'pigulka' }, t))),
-    el('span', { class: 'karta-dol' }, inw.razem
-      ? [pasekPostepu(ile, inw.razem), el('span', { class: 'liczba' }, `${ile} z ${inw.razem}`)]
-      : el('span', { class: 'nowa' }, 'Jeszcze nie otwierana'))
+    el('span', { class: 'karta-dol' }, !inw.razem
+      ? el('span', { class: 'nowa' }, 'Jeszcze nie otwierana')
+      : MATERIALOWKI
+        ? el('span', { class: 'liczba' }, ile ? `Zatwierdzone: ${ile}` : 'Brak zatwierdzonych')
+        : [pasekPostepu(ile, inw.razem), el('span', { class: 'liczba' }, `${ile} z ${inw.razem}`)])
   );
 }
 
@@ -402,10 +415,7 @@ function renderujAdresy() {
     const ile = zrobione(inw.id);
     wstaw($('podsumowanie'), [pasekPostepu(ile, aktywne.length), el('span', {}, el('strong', {}, String(ile)), ` z ${aktywne.length} adresów zrobione`)]);
   }
-  // Przełącznik audyty / materiałówki - tylko gdy inwestycja ma zestawy.
-  const przelacznik = (tryb, etykieta) => el('button', { type: 'button', 'aria-pressed': String(stan.tryb === tryb), onclick: () => ustawTryb(tryb) }, etykieta);
-  const maWnioski = Object.values(inw.materialowki?.rodzaje || {}).some(r => r.zestawy.length);
-  wstaw($('tryb'), maWnioski || wnioski ? [przelacznik('audyty', 'Audyty'), przelacznik('wnioski', 'Materiałówki')] : []);
+  wstaw($('tryb'), []); // audyty i materiałówki to osobne aplikacje - bez przełącznika
 
   const segment = (id, etykieta, liczba) => el('button', { type: 'button', 'aria-pressed': String(stan.filtrTypu === id), onclick: () => { stan.filtrTypu = id; renderujAdresy(); } },
     etykieta, el('span', { class: 'ile' }, String(liczba)));
@@ -466,13 +476,6 @@ $('odswiez').addEventListener('click', async () => {
   }
 });
 
-async function ustawTryb(tryb) {
-  if (tryb !== stan.tryb) stan.filtrTypu = null;
-  stan.tryb = tryb;
-  renderujAdresy();
-  await zapisz('ustawienia', 'tryb', tryb);
-}
-
 function wybierzAdres(a) {
   if (stan.tryb === 'wnioski') { location.hash = `w/${encodeURIComponent(stan.inwestycja.id)}/${encodeURIComponent(a.id)}/${stan.filtrTypu}`; return; }
   const otworz = typ => { location.hash = `p/${encodeURIComponent(stan.inwestycja.id)}/${encodeURIComponent(a.id)}/${typ}`; };
@@ -491,7 +494,7 @@ function wybierzAdres(a) {
 
 // --- Wysyłka na Dysk ---
 
-const czekajace = () => [...stan.audyty].filter(([, a]) => a.status === 'zapisany' && a.inwestycja === stan.inwestycja?.id).map(([k]) => k);
+const czekajace = () => [...stan.audyty].filter(([, a]) => a.status === 'zapisany' && a.inwestycja === stan.inwestycja?.id && (a.typ === 'wniosek') === MATERIALOWKI).map(([k]) => k);
 
 function pokazKolejke() {
   const ile = czekajace().length;
@@ -664,7 +667,8 @@ async function ekranProtokol(idInwestycji, idAdresu, typ) {
   const wzor = wybierzWzor(stan.inwestycja.wzory, typ, a.rodzajPompy);
   if (!wzor) {
     $('strony').replaceChildren();
-    pokazUwage('komunikat', typ === 'pompy' && !a.rodzajPompy
+    const ileWzorowPc = stan.inwestycja.wzory.filter(w => rozpoznajWzor(w.nazwa).typ === 'pompy').length;
+    pokazUwage('komunikat', typ === 'pompy' && !a.rodzajPompy && ileWzorowPc > 1
       ? 'Nie wiem, który wzór wybrać: w tabeli brak „rodzaju pompy”, a w folderze wzorów jest kilka wzorów PC.'
       : `Brak wzoru protokołu dla: ${TYP[typ].etykieta}. Poproś biuro o wrzucenie go do folderu „Wzory audytów” tej inwestycji.`);
     return;
@@ -1096,6 +1100,7 @@ async function wniosekZDysku(rekord, a, klucz, typ) {
     pola: s.pola || null,
     rozmiaryStron: s.rozmiaryStron || null,
     odczyt: s.odczyt || null,
+    wydaniePrzed: s.wydaniePrzed || null,
     utworzono: s.rozpoczeto,
     rozpoczeto: s.rozpoczeto,
     zmieniono: s.zmieniono,
@@ -1469,11 +1474,12 @@ async function usunWniosekZDysku(rekord) {
       try {
         const wiersze = await google.wartosciArkusza(inw.tabela.id, cel.arkusz);
         const nr = znajdzWiersz(wiersze, cel);
-        const { dane, kolumna } = nr ? wyczyscWydanie({ arkusz: cel.arkusz, wiersze, nrWiersza: nr }) : { dane: [], kolumna: -1 };
+        const poprzednia = rekord.wydaniePrzed?.[`${cel.arkusz}|${nr}`];
+        const { dane, kolumna, wartosc } = nr ? wyczyscWydanie({ arkusz: cel.arkusz, wiersze, nrWiersza: nr, poprzednia }) : { dane: [], kolumna: -1 };
         if (dane.length) await google.zapiszKomorki(inw.tabela.id, dane);
         // Kopia tabeli w tablecie - status na liście adresów od razu bez materiałówki.
         const lokalne = wierszeArkusza(cel.arkusz)[cel.wiersz - 1];
-        if (lokalne && kolumna >= 0) lokalne[kolumna] = '';
+        if (lokalne && kolumna >= 0) lokalne[kolumna] = wartosc;
       } catch (blad) {
         console.warn(blad);
         uwagi.push(`Nie wyczyściłem daty wydania w tabeli montażowej (${blad.status === 403 ? 'brak uprawnień do edycji' : blad.message}).`);
@@ -1501,7 +1507,9 @@ $('zmien-zestaw').addEventListener('click', async () => {
   await zapiszRekord(rekord);
   const cel = `#w/${encodeURIComponent(rekord.inwestycja)}/${encodeURIComponent(rekord.adresId)}/${rekord.instalacja}`;
   zamknijProtokol();
-  if (location.hash === cel) trasa(); else location.hash = cel;
+  // Zastępujemy wpis karty - „wstecz” (i Usuń) ma wrócić do listy adresów,
+  // nie do karty poprzedniego zestawu.
+  if (location.hash === cel) trasa(); else location.replace(cel);
 });
 
 // Pola i rozmiary stron zapisywane w rekordzie (i w PDF) - z nich odczyt
@@ -1613,6 +1621,7 @@ async function zapiszWniosek(otwarty, { zatwierdz = false } = {}) {
       pola,
       rozmiaryStron: strony,
       odczyt: rekord.odczyt || null,
+      wydaniePrzed: rekord.wydaniePrzed || null,
       rozpoczeto,
       zmieniono: teraz,
       zatwierdzono
@@ -1792,7 +1801,11 @@ async function datyDoMontazowej(rekord) {
       const wiersze = await google.wartosciArkusza(tabela.id, cel.arkusz);
       const nrWiersza = znajdzWiersz(wiersze, cel);
       if (!nrWiersza) { problemy.push(`nie ma wiersza „${cel.adres}” w arkuszu ${cel.arkusz}`); zatwierdzenieWpisane = false; continue; }
-      const { dane, brak } = datyWMontazowej({ arkusz: cel.arkusz, wiersze, nrWiersza, zapisano: rekord.zmieniono, zatwierdzono: rekord.zatwierdzono });
+      const { dane, brak, poprzednia } = datyWMontazowej({ arkusz: cel.arkusz, wiersze, nrWiersza, zapisano: rekord.zmieniono, zatwierdzono: rekord.zatwierdzono });
+      // Wartość sprzed pierwszego zapisu - Usuń ją przywróci (np. planowaną datę biura).
+      rekord.wydaniePrzed ||= {};
+      const kluczKomorki = `${cel.arkusz}|${nrWiersza}`;
+      if (poprzednia !== undefined && !(kluczKomorki in rekord.wydaniePrzed)) rekord.wydaniePrzed[kluczKomorki] = poprzednia;
       problemy.push(...brak);
       if (brak.some(b => /zakończenia/.test(b))) zatwierdzenieWpisane = false;
       if (dane.length) await google.zapiszKomorki(tabela.id, dane, 'USER_ENTERED');
@@ -1818,12 +1831,16 @@ window.addEventListener('online', pokazSiec);
 window.addEventListener('offline', pokazSiec);
 
 async function start() {
+  if (MATERIALOWKI) {
+    document.querySelector('#ekran-start h1').textContent = 'Materiałówki';
+    document.querySelector('#ekran-start .powitanie > p').textContent = 'Wybierz inwestycję, rodzaj instalacji i adres, wpisz wydane ilości – materiałówka trafi na Dysk i do arkusza „Materiałówka”.';
+    document.querySelector('#ekran-start .logo').src = 'icons/materialowki.svg';
+  }
   wstawIkony();
   pokazSiec();
   try {
     stan.inwestycje = await odczytaj('ustawienia', 'inwestycje') || [];
     stan.ostatnie = await odczytaj('ustawienia', 'ostatnie') || [];
-    stan.tryb = await odczytaj('ustawienia', 'tryb') || 'audyty';
     for (const r of await wszystkie('audyty')) if (r.inwestycja) stan.audyty.set(r.klucz, { status: r.status, inwestycja: r.inwestycja, typ: r.typ, zatwierdzono: r.zatwierdzono || null });
     await poAktualizacji();
   } catch (blad) {

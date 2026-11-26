@@ -11,7 +11,7 @@ import { tekstSzablonu } from '../public/src/wypelnianie.js';
 import { zbudujPdf } from '../public/src/eksport.js';
 import {
   polaZestawu, wartosciPoczatkowe, iloscKoncowa, recznaIlosc, wierszeMaterialowki, zmianyMaterialowki, arkuszMaterialowki,
-  datyWMontazowej, datyZMontazowej, wyczyscWydanie, ekipaZMontazowej, dataZKomorki, podpowiedzZestawu, zalacznikiStanu, stanZPdf
+  datyWMontazowej, datyZMontazowej, wyczyscWydanie, czyDataKomorki, ekipaZMontazowej, dataZKomorki, podpowiedzZestawu, zalacznikiStanu, stanZPdf
 } from '../public/src/wniosek.js';
 import { przypiszKreski } from '../public/src/odczyt-pisma.js';
 
@@ -53,6 +53,44 @@ async function zestaw() {
   t(s2, 52, 722, 'Podpis instalatora'); t(s2, 110, 722, '..........................');
   return doc.save();
 }
+
+// Drugi układ (zestawy PV): ADRES/Data/Ekipa w jednej linii, kolumny „jedn.”
+// i pusta „Ile pozostało [szt.]”, tytuły grup bez jednostki, zawinięta nazwa,
+// jednostka 3 pt niżej niż nazwa, ciąg dalszy na 2. stronie.
+async function zestawJednostkowy() {
+  const doc = await PDFDocument.create();
+  const f = await doc.embedFont(StandardFonts.Helvetica);
+  const t = (s, x, y, tekst) => s.drawText(tekst, { x, y, size: 9, font: f });
+  const s1 = doc.addPage([595, 842]);
+  t(s1, 20, 776, 'ADRES'); t(s1, 360, 776, 'Data'); t(s1, 473, 776, 'Ekipa');
+  t(s1, 20, 734, 'MODULY FOTOWOLTAICZNE'); t(s1, 360, 734, 'jedn.'); t(s1, 443, 733, 'Ile pozostalo [szt.]');
+  t(s1, 20, 720, 'Modul testowy 450W'); t(s1, 364, 719, 'szt');
+  t(s1, 20, 704, 'FALOWNIKI');
+  t(s1, 20, 690, 'Falownik 5K'); t(s1, 364, 690, 'szt');
+  t(s1, 20, 676, 'Stycznik modulowy 4P 40A'); t(s1, 364, 676, 'szt');
+  t(s1, 20, 663.6, 'PRODUCENT TESTOWY');
+  t(s1, 20, 651, 'Kable');
+  t(s1, 20, 637, 'Kabel solarny 4mm2'); t(s1, 363, 634, 'mb');
+  const s2 = doc.addPage([595, 842]);
+  t(s2, 20, 778, 'Kabel YKY 5x6'); t(s2, 363, 778, 'mb');
+  return doc.save();
+}
+
+test('pola zestawu w układzie z „jedn.”: pozycje z jednostką, kolumna „Ile pozostało”, nagłówek w jednej linii', async () => {
+  const pola = polaZestawu(await tekstSzablonu(await otworz(await zestawJednostkowy())));
+  const pozycje = pola.filter(p => p.rodzaj === 'ilosc');
+  assert.deepEqual(pozycje.map(p => [p.etykieta, p.material, p.strona]), [
+    ['Modul testowy 450W', 'szt', 0],
+    ['Falownik 5K', 'szt', 0],
+    ['Stycznik modulowy 4P 40A PRODUCENT TESTOWY', 'szt', 0],
+    ['Kabel solarny 4mm2', 'mb', 0],
+    ['Kabel YKY 5x6', 'mb', 1]
+  ]);
+  assert.ok(pozycje.every(p => !p.wydrukowano && p.x > 380 && p.x < 443 && p.x + p.w > 526));
+  assert.notEqual(pozycje[0].sekcja, pozycje[1].sekcja);
+  const naglowek = Object.fromEntries(pola.filter(p => p.rodzaj !== 'ilosc').map(p => [p.id, [Math.round(p.x), Math.round(p.x + p.w)]]));
+  assert.ok(naglowek.adres[1] <= 350 && naglowek.data[0] > 360 && naglowek.data[1] <= 463 && naglowek.ekipa[0] > 473);
+});
 
 test('pola zestawu: nagłówek, pozycje z wydrukowaną ilością, ciąg dalszy na 2. stronie', async () => {
   const pola = polaZestawu(await tekstSzablonu(await otworz(await zestaw())));
@@ -164,7 +202,7 @@ const MONTAZ = [
 
 test('tabela montażowa: data zapisu do „wydania”, zatwierdzenia do „zakończenia” (nigdy nie czyszczona)', () => {
   const zapis = datyWMontazowej({ arkusz: 'pompy ciepła audyt', wiersze: MONTAZ, nrWiersza: 2, zapisano: '2026-11-24T09:05:00', zatwierdzono: null });
-  assert.deepEqual(zapis, { dane: [{ range: "'pompy ciepła audyt'!E2", values: [['2026-11-24']] }], brak: [] });
+  assert.deepEqual(zapis, { dane: [{ range: "'pompy ciepła audyt'!E2", values: [['2026-11-24']] }], brak: [], poprzednia: '' });
   const zatw = datyWMontazowej({ arkusz: 'PV_ME', wiersze: MONTAZ, nrWiersza: 2, zapisano: '2026-11-25T10:00:00', zatwierdzono: '2026-11-25T10:00:00' });
   assert.deepEqual(zatw.dane.map(d => [d.range, d.values[0][0]]), [["'PV_ME'!E2", '2026-11-25'], ["'PV_ME'!F2", '2026-11-25']]);
   const bezKolumn = datyWMontazowej({ arkusz: 'X', wiersze: [['Adres', 'Uwagi'], ['Testowo 12']], nrWiersza: 2, zapisano: '2026-11-24T09:05:00', zatwierdzono: '2026-11-24T09:05:00' });
@@ -181,11 +219,25 @@ test('stan materiałówki z tabeli montażowej; data z liczby seryjnej', () => {
 });
 
 test('usunięcie materiałówki czyści datę wydania; ekipa z kolumny „Ekipa”', () => {
-  assert.deepEqual(wyczyscWydanie({ arkusz: 'PC', wiersze: MONTAZ, nrWiersza: 3 }), { dane: [{ range: "'PC'!E3", values: [['']] }], kolumna: 4 });
+  assert.deepEqual(wyczyscWydanie({ arkusz: 'PC', wiersze: MONTAZ, nrWiersza: 3 }), { dane: [{ range: "'PC'!E3", values: [['']] }], kolumna: 4, wartosc: '' });
   assert.deepEqual(wyczyscWydanie({ arkusz: 'PC', wiersze: MONTAZ, nrWiersza: 2 }).dane, []);
   const zEkipa = [['Adres', 'Ekipa montażowa'], ['Testowo 12', ' Ekipa 3 ']];
   assert.equal(ekipaZMontazowej(zEkipa, 2), 'Ekipa 3');
   assert.equal(ekipaZMontazowej(MONTAZ, 2), '');
+});
+
+test('wpis biura w kolumnie wydania (nie data) zostaje; usunięcie przywraca planowaną datę', () => {
+  const zBiurem = [MONTAZ[0], [1, 'Jan', 'Testowo 12', '', 14, ''], [2, 'Anna', 'Testowo 14', '', 46356, '']];
+  assert.ok(czyDataKomorki(46350) && czyDataKomorki('25.11.2026') && czyDataKomorki('2026-11-25'));
+  assert.ok(!czyDataKomorki(14) && !czyDataKomorki('14') && !czyDataKomorki('') && !czyDataKomorki('wydano'));
+  const zapis = datyWMontazowej({ arkusz: 'PV', wiersze: zBiurem, nrWiersza: 2, zapisano: '2026-11-25T10:00:00', zatwierdzono: null });
+  assert.equal(zapis.dane.length, 0);
+  assert.match(zapis.brak[0], /„14”/);
+  assert.equal(datyZMontazowej(zBiurem, 2).wydano, '');
+  assert.deepEqual(wyczyscWydanie({ arkusz: 'PV', wiersze: zBiurem, nrWiersza: 2 }).dane, []);
+  // planowana data biura nadpisana datą wydania, po usunięciu wraca
+  const poZapisie = [MONTAZ[0], zBiurem[1], [2, 'Anna', 'Testowo 14', '', 46351, '']];
+  assert.deepEqual(wyczyscWydanie({ arkusz: 'PV', wiersze: poZapisie, nrWiersza: 3, poprzednia: 46356 }).dane, [{ range: "'PV'!E3", values: [[46356]] }]);
 });
 
 test('podpowiedź zestawu z numeru pompy w tabeli montażowej', () => {

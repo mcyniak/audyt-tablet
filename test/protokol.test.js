@@ -64,8 +64,10 @@ for (const sciezka of lokalne.szablony) {
     assert.deepEqual(naStronie(6), ['27', '10', '6', DANE.adres, DANE.imie, '27', '10', '6']);
 
     // Imię i nazwisko na stronie 1 zaczyna się tuż za etykietą, na tej samej linii.
+    // Wysokość bierzemy z etykiety, bo biuro czasem przesuwa wiersze w szablonie.
     const imie = wpisy.find(w => w.strona === 0 && w.tekst === DANE.imie);
-    assert.ok(imie.x > 245 && imie.x < 255 && Math.abs(imie.y - 758) < 2, JSON.stringify(imie));
+    const etykieta = szablon.strony[0].elementy.find(e => /^Imię i Nazwisko/.test(e.tekst));
+    assert.ok(imie.x > 245 && imie.x < 255 && Math.abs(imie.y - etykieta.y) < 3, JSON.stringify(imie));
   });
 }
 

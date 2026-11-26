@@ -1,0 +1,16 @@
+{
+  "id": "./?app=materialowki",
+  "name": "Materiałówki",
+  "short_name": "Materiałówki",
+  "description": "Materiałówki: zestaw z Dysku, wydane ilości, zapis na Dysk i do arkusza Materiałówka.",
+  "lang": "pl",
+  "start_url": "./?app=materialowki",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f7f8fa",
+  "theme_color": "#f7f8fa",
+  "icons": [
+    { "src": "icons/materialowki.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

@@ -42,6 +42,43 @@ function linie(elementy) {
 const czysc = t => t.replace(/\s+/g, ' ').trim();
 const mediana = l => { const s = [...l].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : null; };
 
+// Wiersze odstępu między pozycjami w układzie z „jedn.” (~14 pt); dalszy ciąg
+// zawiniętej nazwy jest bliżej (~12,4 pt).
+const CIAG_JEDNOSTKOWY = 13.4;
+
+// Linie strony z układu z „jedn.” -> pozycje. Jednostka bywa o 1-3 pt niżej
+// niż nazwa (osobna linia) - łączona z sąsiednią nazwą. Linia bez jednostki:
+// dalszy ciąg nazwy (tuż pod pozycją) albo tytuł grupy („FALOWNIKI”).
+function wierszeJednostkowe(linie, strona, nowaSekcja) {
+  const scalone = [];
+  for (const l of linie) {
+    const ost = scalone.at(-1);
+    if (ost && Math.abs(ost.y - l.y) < 4 && (!ost.jedn !== !l.jedn) && (!ost.nazwa.length || !l.nazwa.length)) {
+      ost.jedn ||= l.jedn;
+      if (!ost.nazwa.length) { ost.nazwa = l.nazwa; ost.y = l.y; }
+      continue;
+    }
+    scalone.push({ ...l });
+  }
+  const wynik = [];
+  let sekcja = null;
+  let poprzednia = null; // ostatnia linia: { y, pozycja }
+  for (const l of scalone) {
+    if (l.jedn && l.nazwa.length) {
+      const w = { strona, sekcja: (sekcja ??= nowaSekcja()), ys: [l.y], lp: '', nazwa: [...l.nazwa], material: l.jedn, ilosc: null, wysokosc: 11 };
+      wynik.push(w);
+      poprzednia = { y: l.y, pozycja: w };
+    } else if (!l.jedn && poprzednia?.pozycja && poprzednia.y - l.y < CIAG_JEDNOSTKOWY) {
+      poprzednia.pozycja.nazwa.push(...l.nazwa);
+      poprzednia = { y: l.y, pozycja: null };
+    } else if (!l.jedn) {
+      sekcja = nowaSekcja();
+      poprzednia = { y: l.y, pozycja: null };
+    }
+  }
+  return wynik;
+}
+
 /**
  * Pola zestawu z tekstu PDF (wynik tekstSzablonu; y linii bazowej od dołu strony).
  * Pozycje: { id, rodzaj: 'ilosc', etykieta, material, lp, wydrukowano, sekcja, strona, x, y, w, h }
@@ -56,10 +93,37 @@ export function polaZestawu(strony) {
   let pierwszyNaglowekTabeli = null;
   // Tabela przechodzi na kolejne strony bez powtórzonego nagłówka.
   let tabela = null;
+  // Drugi układ (zestawy PV): bez „Nazwa”/„Materiał”, kolumny „jedn.”
+  // i pusta kolumna do wpisania („Ile pozostało [szt.]”).
+  let kolumnaWpisu = null;
   strony.forEach((strona, s) => {
     let poprzedni = null;
+    const jednostkowe = [];
     for (const linia of linie(strona.elementy)) {
       const nazwy = linia.elementy.map(e => normalizuj(e.tekst));
+      const iJedn = tabela ? -1 : nazwy.findIndex(n => /^jedn/.test(n));
+      if (iJedn !== -1) {
+        const jedn = linia.elementy[iJedn];
+        const obok = strona.elementy.filter(e => e.x > jedn.x + jedn.w + 15 && Math.abs(e.y - linia.y) < 16);
+        kolumnaWpisu = obok.length
+          ? {
+              x: Math.min(...obok.map(e => e.x)),
+              koniec: Math.max(...obok.map(e => e.x + e.w)),
+              // Nagłówek w kilku liniach równo od lewej („Ile / pozostało / [szt.]”)
+              // wypełnia wąską kolumnę; jedna linia jest wyśrodkowana w szerszej.
+              doLewej: obok.length > 1 && obok.every(e => Math.abs(e.x - obok[0].x) < 1.5)
+            }
+          : { x: jedn.x + jedn.w + 30, koniec: jedn.x + jedn.w + 110 };
+        tabela = { jednostki: true, xJedn: jedn.x };
+        pierwszyNaglowekTabeli ??= { strona: s, y: linia.y };
+        continue;
+      }
+      if (tabela?.jednostki) {
+        const jedn = linia.elementy.find(e => Math.abs(e.x - tabela.xJedn) < 20 && /^[a-ząćęłńóśźż.²0-9]{1,6}$/i.test(czysc(e.tekst)));
+        const nazwa = linia.elementy.filter(e => e.x < tabela.xJedn - 15).map(e => czysc(e.tekst)).filter(Boolean);
+        if (jedn || nazwa.length) jednostkowe.push({ y: linia.y, jedn, nazwa });
+        continue;
+      }
       const iNazwa = nazwy.indexOf('nazwa');
       if (iNazwa !== -1) {
         const material = linia.elementy.find(e => /^materia/.test(normalizuj(e.tekst)));
@@ -94,6 +158,7 @@ export function polaZestawu(strony) {
       poprzedni = { strona: s, sekcja, ys: [linia.y], ...czesc };
       wiersze.push(poprzedni);
     }
+    wiersze.push(...wierszeJednostkowe(jednostkowe, s, () => (sekcja += 1)));
   });
 
   // Kolumna ilości: od prawej krawędzi kolumny Materiał do lustrzanego odbicia
@@ -102,10 +167,22 @@ export function polaZestawu(strony) {
   const srodekIlosci = mediana(wiersze.filter(w => w.ilosc).map(w => w.ilosc.x + w.ilosc.w / 2));
   const lewaIlosci = Math.min(...wiersze.filter(w => w.ilosc).map(w => w.ilosc.x));
   // Granica kolumn: w połowie między najdłuższym materiałem a wydrukowaną ilością.
-  const x0 = Number.isFinite(prawyMaterial)
+  let x0 = Number.isFinite(prawyMaterial)
     ? (lewaIlosci > prawyMaterial ? (prawyMaterial + lewaIlosci) / 2 : prawyMaterial + 3)
     : (srodekIlosci ?? 420) - 30;
-  const x1 = srodekIlosci !== null && srodekIlosci > x0 + 5 ? Math.max(2 * srodekIlosci - x0, srodekIlosci + 35) : x0 + 60;
+  let x1 = srodekIlosci !== null && srodekIlosci > x0 + 5 ? Math.max(2 * srodekIlosci - x0, srodekIlosci + 35) : x0 + 60;
+  if (kolumnaWpisu) {
+    // Układ z „jedn.”: od połowy odstępu za jednostką (+5) do lustrzanego
+    // odbicia względem środka nagłówka kolumny (ramki tabeli nie ma w tekście).
+    if (kolumnaWpisu.doLewej) {
+      x0 = kolumnaWpisu.x - 1;
+      x1 = kolumnaWpisu.koniec + 2;
+    } else {
+      x0 = (Number.isFinite(prawyMaterial) && prawyMaterial < kolumnaWpisu.x ? (prawyMaterial + kolumnaWpisu.x) / 2 : kolumnaWpisu.x - 15) + 5;
+      const srodek = (kolumnaWpisu.x + kolumnaWpisu.koniec) / 2;
+      x1 = Math.max(2 * srodek - x0, kolumnaWpisu.koniec + 5, x0 + 60);
+    }
+  }
 
   const pozycje = wiersze
     .map(w => ({ ...w, nazwa: czysc(w.nazwa.join(' ')) }))
@@ -124,7 +201,7 @@ export function polaZestawu(strony) {
         x: x0,
         y: yLinii - 2,
         w: x1 - x0,
-        h: 9.5 + (w.ys.length - 1) * 5
+        h: w.wysokosc || 9.5 + (w.ys.length - 1) * 5
       };
     });
 
@@ -136,6 +213,20 @@ export function polaZestawu(strony) {
   const adres = etykieta(/^adres/);
   const kolumnaMaterialu = Number.isFinite(prawyMaterial) ? prawyMaterial : x0;
   const pola = [];
+  if (kolumnaWpisu) {
+    // Etykiety w jednej linii („ADRES … Data … Ekipa”) albo pod sobą:
+    // pole od etykiety do następnej etykiety w tej linii albo do prawej
+    // krawędzi tabeli (za wąskie pole - tekst w PDF się zmniejsza).
+    const etykiety = [ekipa, data, adres].filter(Boolean);
+    for (const [id, rodzaj, nazwa, e] of [['ekipa', 'tekst', 'Ekipa', ekipa], ['data', 'data', 'Data', data], ['adres', 'adres', 'Adres montażu', adres]]) {
+      if (!e) continue;
+      const x = e.x + e.w + 6;
+      const prawe = etykiety.filter(o => o !== e && Math.abs(o.y - e.y) < 3 && o.x > x).map(o => o.x);
+      const koniec = prawe.length ? Math.min(...prawe) - 10 : x1;
+      pola.push({ id, rodzaj, etykieta: nazwa, strona: 0, x, y: e.y, w: Math.max(koniec - x, 30) });
+    }
+    return [...pola, ...pozycje];
+  }
   if (ekipa) {
     const x = ekipa.x + ekipa.w + 4;
     const koniec = data && Math.abs(data.y - ekipa.y) < 3 && data.x > x ? data.x - 10 : kolumnaMaterialu - 50;
@@ -263,10 +354,23 @@ const dataArkusza = iso => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
 
+// Czy komórka zawiera datę: liczba seryjna Arkuszy albo tekst „25.11.2026”,
+// „2026-11-25”. Biuro wpisuje czasem w kolumnę wydania coś innego (w Słupcy
+// numery 1–18) - takiej wartości aplikacja nie nadpisuje, nie czyści i nie
+// traktuje jako rozpoczętej materiałówki.
+export function czyDataKomorki(v) {
+  const t = String(v ?? '').trim();
+  if (!t) return false;
+  if (/^\d+([.,]\d+)?$/.test(t)) { const n = Number(t.replace(',', '.')); return n > 20000 && n < 80000; }
+  return /^\d{1,4}[./-]\d{1,2}([./-]\d{1,4})?/.test(t);
+}
+
 /**
  * Komórki dat w wierszu adresu. Data zatwierdzenia tylko wpisywana, nigdy
  * czyszczona (kolumnę zakończenia montażu może uzupełniać też biuro).
- * @returns {{ dane: {range, values}[], brak: string[] }} brak - opisy brakujących kolumn
+ * Data wydania nie nadpisuje wpisu biura, który nie jest datą.
+ * @returns {{ dane: {range, values}[], brak: string[], poprzednia: * }} brak - opisy
+ *   problemów; poprzednia - wartość komórki wydania przed zapisem (do przywrócenia przy usunięciu)
  */
 export function datyWMontazowej({ arkusz, wiersze, nrWiersza, zapisano, zatwierdzono }) {
   const k = kolumnyDat(wiersze);
@@ -274,24 +378,31 @@ export function datyWMontazowej({ arkusz, wiersze, nrWiersza, zapisano, zatwierd
   if (!k) return { dane: [], brak: [`arkusz ${arkusz} nie ma nagłówka z kolumną „Adres”`] };
   const dane = [];
   const brak = [];
+  const poprzednia = k.zapis === -1 ? undefined : (wiersze[nrWiersza - 1]?.[k.zapis] ?? '');
   if (k.zapis === -1) brak.push(`w arkuszu ${arkusz} nie ma kolumny „data wydania…”`);
+  else if (String(poprzednia).trim() && !czyDataKomorki(poprzednia)) brak.push(`w kolumnie „${String(k.nazwy[k.zapis]).trim()}” jest już wpis biura „${String(poprzednia).trim()}” – zostawiam go, data wydania nie wpisana`);
   else if (zapisano) dane.push({ range: komorka(k.zapis, nrWiersza), values: [[dataArkusza(zapisano)]] });
   if (zatwierdzono) {
     if (k.zatwierdzenie === -1) brak.push(`w arkuszu ${arkusz} nie ma kolumny „data zakończenia…”`);
     else dane.push({ range: komorka(k.zatwierdzenie, nrWiersza), values: [[dataArkusza(zatwierdzono)]] });
   }
-  return { dane, brak };
+  return { dane, brak, poprzednia };
 }
 
 /**
- * Usunięta (niezatwierdzona) materiałówka: czyszczenie daty wydania w wierszu
- * adresu. Data zakończenia zostaje - nie usuwa się zatwierdzonych.
- * @returns {{ dane: {range, values}[], kolumna: number }} kolumna - indeks daty wydania albo -1
+ * Usunięta (niezatwierdzona) materiałówka: data wydania w wierszu adresu
+ * wraca do wartości sprzed pierwszego zapisu (np. planowanej daty biura),
+ * a bez niej jest czyszczona. Wpis, który nie jest datą, zostaje. Data
+ * zakończenia zostaje - nie usuwa się zatwierdzonych.
+ * @returns {{ dane: {range, values}[], kolumna: number, wartosc: * }} kolumna - indeks daty wydania albo -1
  */
-export function wyczyscWydanie({ arkusz, wiersze, nrWiersza }) {
+export function wyczyscWydanie({ arkusz, wiersze, nrWiersza, poprzednia }) {
   const k = kolumnyDat(wiersze);
-  if (!k || k.zapis === -1 || !String(wiersze[nrWiersza - 1]?.[k.zapis] ?? '').trim()) return { dane: [], kolumna: k?.zapis ?? -1 };
-  return { dane: [{ range: `'${arkusz.replace(/'/g, "''")}'!${kolumnaA1(k.zapis)}${nrWiersza}`, values: [['']] }], kolumna: k.zapis };
+  const obecna = k && k.zapis !== -1 ? wiersze[nrWiersza - 1]?.[k.zapis] : '';
+  if (!k || k.zapis === -1 || !czyDataKomorki(obecna)) return { dane: [], kolumna: -1 };
+  const wartosc = czyDataKomorki(poprzednia) ? poprzednia : '';
+  if (String(wartosc) === String(obecna)) return { dane: [], kolumna: -1 };
+  return { dane: [{ range: `'${arkusz.replace(/'/g, "''")}'!${kolumnaA1(k.zapis)}${nrWiersza}`, values: [[wartosc]] }], kolumna: k.zapis, wartosc };
 }
 
 // Ekipa z kolumny „Ekipa…” w wierszu adresu tabeli montażowej.
@@ -308,7 +419,8 @@ export function datyZMontazowej(wiersze, nrWiersza) {
   const k = kolumnyDat(wiersze);
   const w = wiersze[nrWiersza - 1] || [];
   const wartosc = i => (i === -1 || !k ? '' : String(w[i] ?? '').trim());
-  return { wydano: wartosc(k?.zapis ?? -1), zakonczono: wartosc(k?.zatwierdzenie ?? -1), maKolumneZatwierdzenia: Boolean(k && k.zatwierdzenie !== -1) };
+  const wydano = wartosc(k?.zapis ?? -1);
+  return { wydano: czyDataKomorki(wydano) ? wydano : '', zakonczono: wartosc(k?.zatwierdzenie ?? -1), maKolumneZatwierdzenia: Boolean(k && k.zatwierdzenie !== -1) };
 }
 
 // Wartość komórki daty (liczba seryjna Arkuszy albo tekst) do wyświetlenia.

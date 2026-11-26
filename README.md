@@ -8,6 +8,22 @@ Forma: aplikacja webowa instalowana z Chrome („Dodaj do ekranu głównego”),
 działająca offline. Bez serwera z danymi: adresy i audyty idą prosto między
 tabletem a Google Drive/Sheets.
 
+## Dwie aplikacje: Audyty i Materiałówki
+
+Z jednego kodu, ale dla innych osób – żadna nie pokazuje części drugiej
+(przełącznika, ekranów, liczników):
+
+| Aplikacja | Adres | Dla kogo |
+|---|---|---|
+| **Audyty** | https://mcyniak.github.io/audyt-tablet/ | audytorzy w terenie |
+| **Materiałówki** | https://mcyniak.github.io/audyt-tablet/materialowki/ (→ `?app=materialowki`) | magazyn |
+
+Każdą instaluje się osobno z Chrome („Dodaj do ekranu głównego”) – własna
+nazwa, ikona (zielona paczka) i manifest (`manifest-materialowki.webmanifest`).
+Tryb wynika z adresu (`?app=materialowki`), nie z ustawień. Link do ekranu
+drugiej aplikacji kończy się na liście adresów. To rozdzielenie widoku, nie
+uprawnień – dostęp do plików wyznaczają uprawnienia na Dysku.
+
 ## Uruchomienie lokalne
 
 ```
@@ -113,8 +129,7 @@ magazynu energii nie ma na wzorze - o nie okno pyta przyciskami.
 
 ## Materiałówki (wnioski materiałowe)
 
-Na liście adresów przełącznik „Audyty / Materiałówki” (widoczny, gdy inwestycja
-ma folder z „materiałówki” w nazwie i w nim zestawy). Materiałówkę wypełnia szef
+Osobna aplikacja **Materiałówki** (adres wyżej). Materiałówkę wypełnia szef
 magazynu: inwestycja → rodzaj instalacji (segmenty nad listą, bez „Wszystkie”)
 → adres → zestaw. Pod jednym adresem PV i PC to dwie osobne materiałówki.
 
@@ -129,6 +144,11 @@ magazynu: inwestycja → rodzaj instalacji (segmenty nad listą, bez „Wszystki
   niż 7 pt) to jedna pozycja. Nad tabelą: „Ekipa” (z kolumny „Ekipa…”
   tabeli montażowej, gdy jest; można zmienić), „Data” i „Adres montażu”
   (wpisują się same).
+- **Drugi układ zestawu** (np. zestawy PV): bez „Nazwa/Materiał”, z kolumnami
+  „jedn.” i pustą „Ile pozostało [szt.]”. Pozycja = linia z jednostką (szt,
+  mb, kpl, op…); linia bez jednostki tuż pod pozycją (<13,4 pt) to dalszy
+  ciąg nazwy, dalej – tytuł grupy. Pole ilości w kolumnie „Ile pozostało”;
+  „ADRES / Data / Ekipa” w jednej linii – pola między etykietami.
 - **Ilości:** wydrukowana zostaje, jeśli w jej polu nic nie napisano.
   Rysikiem: skreślenie = 0 (pozycja nie trafia do arkusza), nowa liczba =
   poprawka, liczba w pustym polu = dopisana ilość. Przy zatwierdzeniu (z
@@ -172,6 +192,11 @@ magazynu: inwestycja → rodzaj instalacji (segmenty nad listą, bez „Wszystki
   Błąd (brak kolumny, ochrona) nie blokuje materiałówki – uwaga na tablecie
   i ponowna próba przy kolejnym zapisie. Status na liście adresów też z tych
   kolumn.
+  Wpis biura w kolumnie wydania, który nie jest datą (w Słupcy numery 1–18,
+  w Zagórowie „x”), zostaje – aplikacja go nie nadpisuje (uwaga na tablecie),
+  nie czyści i nie liczy jako rozpoczętej materiałówki. Wartość sprzed
+  pierwszego zapisu (np. planowana data) jest zapamiętana i *Usuń* ją
+  przywraca.
 - **Edycja z każdego urządzenia.** PDF ma w środku załączniki
   `wniosek-stan.json` (wartości, kreski, zestaw) i `wniosek-wzor.pdf` (czysty
   zestaw). Gdy na Dysku jest nowsza wersja niż w tablecie, aplikacja wczytuje

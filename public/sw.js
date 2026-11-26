@@ -34,7 +34,9 @@ const PLIKI = [
   'vendor/anthropic.mjs',
   'vendor/DejaVuSansCondensed.ttf',
   'manifest.webmanifest',
-  'icons/icon.svg'
+  'manifest-materialowki.webmanifest',
+  'icons/icon.svg',
+  'icons/materialowki.svg'
 ];
 
 self.addEventListener('install', e => {
