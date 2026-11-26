@@ -24,6 +24,14 @@ Tryb wynika z adresu (`?app=materialowki`), nie z ustawień. Link do ekranu
 drugiej aplikacji kończy się na liście adresów. To rozdzielenie widoku, nie
 uprawnień – dostęp do plików wyznaczają uprawnienia na Dysku.
 
+**Filtr ekipy** (obie aplikacje): na liście adresów pole „Ekipa” z ekipami
+z tabeli montażowej (ta sama kolumna co auto-wpis ekipy: „Ekipa…”, a gdy
+pusta – „monter”; w Materiałówkach z arkusza wybranego rodzaju). Nazwy łączone
+bez względu na wielkość liter i spacje, liczba adresów przy każdej, na końcu
+„Bez ekipy”. Wybór zapamiętany w tablecie osobno dla inwestycji i rodzaju;
+ekipa, której już nie ma w tabeli – wszystkie adresy. Bez filtra przy adresie
+widać „Ekipa: …”. Tabela bez ekip – pola nie ma.
+
 ## Uruchomienie lokalne
 
 ```

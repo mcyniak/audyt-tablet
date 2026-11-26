@@ -11,7 +11,7 @@ import { tekstSzablonu } from '../public/src/wypelnianie.js';
 import { zbudujPdf } from '../public/src/eksport.js';
 import {
   polaZestawu, wartosciPoczatkowe, iloscKoncowa, recznaIlosc, wierszeMaterialowki, zmianyMaterialowki, arkuszMaterialowki,
-  datyWMontazowej, datyZMontazowej, wyczyscWydanie, czyDataKomorki, ekipaZMontazowej, dataZKomorki, podpowiedzZestawu, zalacznikiStanu, stanZPdf
+  datyWMontazowej, datyZMontazowej, wyczyscWydanie, czyDataKomorki, ekipaZMontazowej, grupujEkipy, dataZKomorki, podpowiedzZestawu, zalacznikiStanu, stanZPdf
 } from '../public/src/wniosek.js';
 import { przypiszKreski } from '../public/src/odczyt-pisma.js';
 
@@ -276,4 +276,13 @@ test('PDF materiałówki niesie stan do edycji (wartości, kreski, czysty zestaw
   assert.deepEqual(odczyt.stan, { wersja: 2, ...stan });
   assert.equal(odczyt.wzor.length, wzor.length);
   assert.equal(await stanZPdf(await otworz(wzor)), null);
+});
+
+test('ekipy do filtra: bez różnic wielkości liter i spacji, „bez ekipy” na końcu', () => {
+  assert.deepEqual(grupujEkipy(['Majki', ' majki ', 'Andre', '', 'jura', '']), [
+    { klucz: 'andre', nazwa: 'Andre', ile: 1 },
+    { klucz: 'jura', nazwa: 'jura', ile: 1 },
+    { klucz: 'majki', nazwa: 'Majki', ile: 2 },
+    { klucz: '', nazwa: '', ile: 2 }
+  ]);
 });

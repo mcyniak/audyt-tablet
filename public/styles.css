@@ -257,6 +257,25 @@ main { max-width: 920px; margin: 0 auto; padding: 0 20px 64px; }
 .segmenty button[aria-pressed="true"] { background: var(--powierzchnia); color: var(--tekst); box-shadow: var(--cien-2); }
 .segmenty .ile { margin-left: 6px; color: var(--tekst-3); font-weight: 500; }
 
+/* Filtr ekipy (z tabeli montażowej) pod segmentami. */
+.filtr-ekipy {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: var(--cel);
+  margin-top: 12px;
+  padding: 0 16px;
+  border-radius: var(--r-m);
+  background: var(--powierzchnia);
+  box-shadow: var(--cien-2);
+  color: var(--tekst-2);
+  font-size: 15px;
+  font-weight: 600;
+}
+.filtr-ekipy:focus-within { box-shadow: 0 0 0 2px var(--marka), var(--cien-2); }
+.filtr-ekipy select { flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: none; color: var(--tekst); font: inherit; }
+.filtr-ekipy.aktywny { box-shadow: 0 0 0 2px var(--marka), var(--cien-2); }
+
 /* --- Inwestycje: karty --- */
 
 .sekcja { margin: 28px 4px 12px; color: var(--tekst-2); font-size: 13px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; }

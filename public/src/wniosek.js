@@ -419,6 +419,20 @@ export function ekipaZMontazowej(wiersze, nrWiersza) {
   return kolumny.map(i => String(w[i] ?? '').trim()).find(v => v && !v.startsWith('#') && !/^ekipy\b/i.test(v)) || '';
 }
 
+// Ekipy do filtra listy adresów: ta sama ekipa niezależnie od wielkości liter
+// i spacji („majki” = „Majki ”). Klucz '' = adresy bez ekipy.
+export const kluczEkipy = nazwa => normalizuj(nazwa);
+export function grupujEkipy(nazwy) {
+  const grupy = new Map();
+  for (const n of nazwy) {
+    const klucz = kluczEkipy(n);
+    const g = grupy.get(klucz) || { klucz, nazwa: klucz ? String(n).trim() : '', ile: 0 };
+    g.ile += 1;
+    grupy.set(klucz, g);
+  }
+  return [...grupy.values()].sort((a, b) => (!a.klucz) - (!b.klucz) || a.nazwa.localeCompare(b.nazwa, 'pl'));
+}
+
 // Stan materiałówki z wiersza adresu: { wydano, zakonczono, maKolumneZatwierdzenia }
 // (surowe wartości komórek).
 export function datyZMontazowej(wiersze, nrWiersza) {

@@ -6,7 +6,7 @@ import { utworzEdytor } from './src/edytor.js';
 import { zbudujPdf } from './src/eksport.js';
 import { wybierzWzor, rozpoznajWzor } from './src/wzory.js';
 import { PYTANIA_PV, kolumnyPytan, odpowiedziZWiersza, znajdzWiersz, zmianyWiersza, pytaniaNaWzorze, odpowiedziZProtokolu } from './src/ankieta.js';
-import { polaZestawu, wartosciPoczatkowe, iloscKoncowa, recznaIlosc, wierszeMaterialowki, zmianyMaterialowki, arkuszMaterialowki, datyWMontazowej, datyZMontazowej, wyczyscWydanie, ekipaZMontazowej, podpowiedzZestawu, blokiDoUsuniecia, dataCzytelna, zalacznikiStanu, stanZPdf } from './src/wniosek.js';
+import { polaZestawu, wartosciPoczatkowe, iloscKoncowa, recznaIlosc, wierszeMaterialowki, zmianyMaterialowki, arkuszMaterialowki, datyWMontazowej, datyZMontazowej, wyczyscWydanie, ekipaZMontazowej, grupujEkipy, kluczEkipy, podpowiedzZestawu, blokiDoUsuniecia, dataCzytelna, zalacznikiStanu, stanZPdf } from './src/wniosek.js';
 import { zakres } from './src/tabela-materialowa.js';
 import { przypiszKreski, podpisPisma, wycinekPola, odczytajIlosci, zlyKlucz } from './src/odczyt-pisma.js';
 import { ikona, wstawIkony } from './src/ikony.js';
@@ -37,6 +37,7 @@ const stan = {
   szukajInwestycji: '',
   szukajAdresu: '',
   filtrTypu: null,
+  filtryEkip: {}, // rodzaj instalacji -> klucz ekipy (kluczEkipy); brak = wszystkie, '-' = bez ekipy
   pokazRezygnacje: false,
   ostrzezenieOdswiezania: '',
   protokol: null // otwarty protokół: { rekord, edytor, dokument, strony, szablon }
@@ -329,6 +330,9 @@ async function zaladujInwestycje(id, { odswiez = false } = {}) {
   stan.filtrTypu = null;
   stan.szukajAdresu = '';
   $('szukaj-adresu').value = '';
+  stan.ekipyAdresow = new Map();
+  stan.filtryEkip = {};
+  try { stan.filtryEkip = JSON.parse(localStorage.getItem(`audyt.ekipy.${id}`)) || {}; } catch { /* bez localStorage */ }
   stan.ostrzezenieOdswiezania = ostrzezenie;
 
   stan.ostatnie = [id, ...stan.ostatnie.filter(x => x !== id)].slice(0, 10);
@@ -385,6 +389,24 @@ const OPIS_WNIOSKU = { zatwierdzony: 'Zatwierdzony', zapisany: 'Czeka na wysyłk
 const kolkoWniosku = status => el('span', { class: `kolko ${{ zatwierdzony: 'wyslany', zapisany: 'zapisany', rozpoczety: 'szkic' }[status] || ''}`, title: OPIS_WNIOSKU[status] || 'Nie rozpoczęty' },
   status && ikona({ zatwierdzony: 'klodka', zapisany: 'wysylka', rozpoczety: 'pioro' }[status]));
 
+// Ekipa adresu z tabeli montażowej (w Materiałówkach - z arkusza danego
+// rodzaju instalacji). Liczona raz na inwestycję i rodzaj.
+function ekipaAdresu(a, typ) {
+  const klucz = `${typ || ''}|${a.id}`;
+  if (!stan.ekipyAdresow.has(klucz)) {
+    const rekordy = typ ? wierszeMontazowe(a, typ) : a.rekordy;
+    stan.ekipyAdresow.set(klucz, rekordy.map(r => ekipaZMontazowej(wierszeArkusza(r.arkusz), r.wiersz)).find(Boolean) || '');
+  }
+  return stan.ekipyAdresow.get(klucz);
+}
+
+// Wybrana ekipa zapamiętana w tablecie osobno dla inwestycji i rodzaju instalacji.
+function ustawFiltrEkipy(klucz) {
+  stan.filtryEkip[stan.filtrTypu || ''] = klucz;
+  try { localStorage.setItem(`audyt.ekipy.${stan.inwestycja.id}`, JSON.stringify(stan.filtryEkip)); } catch { /* bez localStorage */ }
+  renderujAdresy();
+}
+
 function brakujaceWzory() {
   const inw = stan.inwestycja;
   if (!inw.folderWzorow) return 'W tej inwestycji nie ma folderu „Wzory audytów”. Poproś biuro o wrzucenie wzorów protokołów.';
@@ -429,10 +451,26 @@ function renderujAdresy() {
     ? (zestawyTypu(typWniosku).length ? '' : `Brak zestawów materiałówek${nazwaRodzaju ? ` dla: ${nazwaRodzaju}` : ''}. Wrzuć PDF-y zestawów do folderu „${folderMaterialowek()} / ${rodzajWniosku(typWniosku || 'pompy')}” tej inwestycji i odśwież.`)
     : brakujaceWzory()));
 
+  // Filtr ekipy: lista ekip z adresów widocznego rodzaju; bez ekip w tabeli - ukryty.
+  const ekipa = a => ekipaAdresu(a, typWniosku);
+  const ekipy = grupujEkipy(aktywne.filter(a => !stan.filtrTypu || a.typy.includes(stan.filtrTypu)).map(ekipa));
+  const saEkipy = ekipy.some(g => g.klucz);
+  // Wybrana ekipa, której już nie ma w tabeli (albo tabela bez ekip) - wszystkie.
+  let filtrEkipy = stan.filtryEkip[stan.filtrTypu || ''] || '';
+  if (!saEkipy || !ekipy.some(g => (g.klucz || '-') === filtrEkipy)) filtrEkipy = '';
+  $('filtr-ekipy-pole').hidden = !saEkipy;
+  $('filtr-ekipy-pole').classList.toggle('aktywny', Boolean(filtrEkipy));
+  $('filtr-ekipy').replaceChildren(
+    el('option', { value: '' }, 'Wszystkie ekipy'),
+    ...ekipy.map(g => el('option', { value: g.klucz || '-' }, `${g.klucz ? g.nazwa : 'Bez ekipy'} (${g.ile})`))
+  );
+  $('filtr-ekipy').value = filtrEkipy;
+
   const fraza = normalizuj(stan.szukajAdresu);
   const widoczne = stan.wynik.adresy.filter(a =>
     (stan.pokazRezygnacje || !a.rezygnacja) &&
     (!stan.filtrTypu || a.typy.includes(stan.filtrTypu)) &&
+    (!filtrEkipy || (kluczEkipy(ekipa(a)) || '-') === filtrEkipy) &&
     (!fraza || normalizuj([a.adres, ...a.warianty, a.nazwisko, a.telefon].join(' ')).includes(fraza))
   );
   const wieleTypow = typy.length > 1;
@@ -442,7 +480,7 @@ function renderujAdresy() {
         wnioski ? kolkoWniosku(sWniosku(a)) : kolkoStatusu(statusAdresu(a)),
         el('span', { class: 'tresc' },
           el('span', { class: 'adres' }, a.adres),
-          el('span', { class: 'osoba' }, [a.rezygnacja ? 'Rezygnacja' : '', a.nazwisko].filter(Boolean).join(' · ') || ' ')
+          el('span', { class: 'osoba' }, [a.rezygnacja ? 'Rezygnacja' : '', a.nazwisko, !filtrEkipy && ekipa(a) && `Ekipa: ${ekipa(a)}`].filter(Boolean).join(' · ') || ' ')
         ),
         el('span', { class: 'prawa' }, wieleTypow && !wnioski && a.typy.map(t => el('span', { class: 'pigulka' }, TYP[t].skrot)), ikona('dalej', 'dalej'))
       )
@@ -457,6 +495,7 @@ function renderujAdresy() {
 }
 
 $('szukaj-adresu').addEventListener('input', e => { stan.szukajAdresu = e.target.value; renderujAdresy(); });
+$('filtr-ekipy').addEventListener('change', e => ustawFiltrEkipy(e.target.value));
 $('pokaz-rezygnacje').addEventListener('click', () => { stan.pokazRezygnacje = !stan.pokazRezygnacje; renderujAdresy(); });
 
 $('odswiez').addEventListener('click', async () => {
