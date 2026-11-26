@@ -1864,9 +1864,11 @@ async function poAktualizacji() {
   history.replaceState({ n: 0 }, '', location.pathname + location.search);
 }
 
-// Aplikacja otwarta długo (tablet tylko usypiany): po powrocie sprawdzamy,
-// czy na serwerze nie ma nowej wersji. W trakcie wypełniania nie przeładowujemy -
-// dopiero po powrocie do listy.
+// Nowa wersja na serwerze: przeładowanie strony, a po nim (poAktualizacji)
+// wylogowanie i inwestycje pobierane od nowa - wszyscy pracują na tej samej
+// wersji. Sprawdzane co minutę, po powrocie do okna/tabletu i po odzyskaniu
+// internetu. W trakcie wypełniania nie przeładowujemy (pismo w toku) -
+// stały komunikat, a przeładowanie przy powrocie do listy (trasa).
 async function sprawdzAktualizacje() {
   if (document.hidden || !navigator.onLine) return;
   try {
@@ -1874,13 +1876,25 @@ async function sprawdzAktualizacje() {
     const nowa = /WERSJA_APLIKACJI = '([^']+)'/.exec(tekst)?.[1];
     if (!nowa || nowa === WERSJA_APLIKACJI) return;
     if (stan.protokol) {
-      if (!stan.czekaAktualizacja) toast('Jest nowa wersja aplikacji – zapisz i wróć do listy, wtedy się zaktualizuje.', { czas: 10000 });
+      if (!stan.czekaAktualizacja) toast('Jest nowa wersja aplikacji. Zapisz i wróć do listy – aplikacja uruchomi się od nowa i trzeba będzie zalogować się ponownie.', { typ: 'blad', czas: 0 });
       stan.czekaAktualizacja = true;
+      return;
+    }
+    // Raz na wersję: gdyby przeglądarka (bez service workera) dalej podawała
+    // stare pliki z pamięci podręcznej, nie przeładowujemy w kółko.
+    let proba = null;
+    try { proba = sessionStorage.getItem('audyt.przeladowanoDla'); sessionStorage.setItem('audyt.przeladowanoDla', nowa); } catch { /* bez sessionStorage */ }
+    if (proba === nowa) {
+      if (!stan.prosbaOdswiezenia) toast('Jest nowa wersja aplikacji – zamknij i otwórz ją ponownie (na komputerze Ctrl+F5).', { typ: 'blad', czas: 0 });
+      stan.prosbaOdswiezenia = true;
       return;
     }
     location.reload();
   } catch { /* bez sieci - sprawdzimy następnym razem */ }
 }
 document.addEventListener('visibilitychange', sprawdzAktualizacje);
+window.addEventListener('focus', sprawdzAktualizacje);
+window.addEventListener('online', sprawdzAktualizacje);
+setInterval(sprawdzAktualizacje, 60 * 1000);
 
 start();

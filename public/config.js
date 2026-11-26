@@ -5,7 +5,7 @@
 // Wersja aplikacji - ZMIEŃ PRZY KAŻDYM WYDANIU. Po zmianie tablet sam się
 // przeładuje, wyloguje i pobierze inwestycje od nowa (niewysłane protokoły
 // i materiałówki zostają). Ta sama nazwa jest nazwą pamięci offline (sw.js).
-export const WERSJA_APLIKACJI = 'audyt-v20';
+export const WERSJA_APLIKACJI = 'audyt-v21';
 
 export const GOOGLE = {
   clientId: '460087887322-dcbpakdmkhor2ahf8tlap11ban8ic6gj.apps.googleusercontent.com'
