@@ -148,7 +148,8 @@ test('wiersze Materiałówki: wydruk bez pisma, poprawka rysikiem, skreślenie d
   assert.equal(iloscKoncowa(pola[1], odczyt), '18');
   const w = wierszeMaterialowki({ pola, odczyt, adres: 'Testowo 12', zestaw: 'set 9012', zapisano: '2026-11-24T09:05:00', zatwierdzono: null });
   assert.deepEqual(w.map(r => [r.towar, r.liczba, r['do sprawdzenia']]), [['Beton 25kg', 5, ''], ['Kolano', 18, ''], ['Bufor', 1, 'tak']]);
-  assert.deepEqual(w[0], { adres: 'Testowo 12', towar: 'Beton 25kg', liczba: 5, zestaw: 'set 9012', 'data zapisania': '24.11.2026 09:05', 'data zatwierdzenia': '', 'do sprawdzenia': '' });
+  assert.deepEqual(wierszeMaterialowki({ pola, odczyt, adres: 'Testowo 12', ekipa: ' Flexi Nowak ' }).map(r => r.ekipa), ['Flexi Nowak', 'Flexi Nowak', 'Flexi Nowak']);
+  assert.deepEqual(w[0], { adres: 'Testowo 12', towar: 'Beton 25kg', liczba: 5, zestaw: 'set 9012', ekipa: '', 'data zapisania': '24.11.2026 09:05', 'data zatwierdzenia': '', 'do sprawdzenia': '' });
 });
 
 test('ilość z klawiatury ma pierwszeństwo; pozycje dopisane spoza zestawu', () => {
@@ -179,10 +180,11 @@ test('Materiałówka: wiersze adresu zastępowane, brakujące kolumny dopisane d
   ];
   const z = zmianyMaterialowki({ arkusz: 'PC', wiersze, adres: 'Testowo 12', nowe: [{ adres: 'Testowo 12', towar: 'Beton', liczba: 5, 'data zapisania': '24.11.2026 09:05' }] });
   assert.deepEqual(z.doUsuniecia, [1, 3]);
-  assert.deepEqual(z.dane.map(d => d.range), ["'PC'!D1", "'PC'!E1", "'PC'!F1", "'PC'!G1"]);
-  assert.equal(z.dane[1].values[0][0], 'data zapisania');
-  assert.deepEqual(z.dopisz, { wiersz: 5, wartosci: [['Testowo 12', 'Beton', 5, '', '24.11.2026 09:05', '', '']] });
-  assert.equal(z.szerokosc, 7);
+  assert.deepEqual(z.dane.map(d => d.range), ["'PC'!D1", "'PC'!E1", "'PC'!F1", "'PC'!G1", "'PC'!H1"]);
+  assert.equal(z.dane[1].values[0][0], 'ekipa');
+  assert.equal(z.dane[2].values[0][0], 'data zapisania');
+  assert.deepEqual(z.dopisz, { wiersz: 5, wartosci: [['Testowo 12', 'Beton', 5, '', '', '24.11.2026 09:05', '', '']] });
+  assert.equal(z.szerokosc, 8);
   // Pusty arkusz - cały nagłówek od A1.
   assert.equal(zmianyMaterialowki({ arkusz: 'PV', wiersze: [], adres: 'X 1', nowe: [] }).dane[0].range, "'PV'!A1");
 });
@@ -224,6 +226,17 @@ test('usunięcie materiałówki czyści datę wydania; ekipa z kolumny „Ekipa�
   const zEkipa = [['Adres', 'Ekipa montażowa'], ['Testowo 12', ' Ekipa 3 ']];
   assert.equal(ekipaZMontazowej(zEkipa, 2), 'Ekipa 3');
   assert.equal(ekipaZMontazowej(MONTAZ, 2), '');
+});
+
+test('ekipa pomp: „Ekipa…” ma pierwszeństwo, pusta → „monter”; bez uwag, maila i #N/A', () => {
+  const nag = ['Adres', 'monter', '"Ekipa W PRZYPADKU BRAKU EKIPY PROSZĘ WYPEŁNIĆ FORMULARZ', 'UWAGI EKIPY INSTALATORSKIEJ', 'email ekipa'];
+  const pompy = [nag,
+    ['Testowo 1', 'Flexi Nowak', 'F Kowalski', 'uwaga', 'a@b.pl'],
+    ['Testowo 2', 'Flexi Nowak', '', 'uwaga', 'a@b.pl'],
+    ['Testowo 3', '', '#N/A', 'uwaga', '#N/A (Did not find value)']];
+  assert.equal(ekipaZMontazowej(pompy, 2), 'F Kowalski');
+  assert.equal(ekipaZMontazowej(pompy, 3), 'Flexi Nowak');
+  assert.equal(ekipaZMontazowej(pompy, 4), '');
 });
 
 test('wpis biura w kolumnie wydania (nie data) zostaje; usunięcie przywraca planowaną datę', () => {

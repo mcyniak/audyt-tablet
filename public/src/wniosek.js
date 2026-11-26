@@ -263,16 +263,16 @@ export const recznaIlosc = (pole, reczne) => String(reczne?.[pole.id] ?? '').tri
 
 // --- arkusz „Materiałówka” ------------------------------------------------------
 
-export const KOLUMNY_MATERIALOWKI = ['adres', 'towar', 'liczba', 'zestaw', 'data zapisania', 'data zatwierdzenia', 'do sprawdzenia'];
+export const KOLUMNY_MATERIALOWKI = ['adres', 'towar', 'liczba', 'zestaw', 'ekipa', 'data zapisania', 'data zatwierdzenia', 'do sprawdzenia'];
 
 /**
  * Wiersze materiałówki: jeden na pozycję z ilością (skreślone do zera pomijamy)
  * i na każdą pozycję dopisaną spoza zestawu.
  * pola: zapisane w rekordzie, odczyt: { wartosci, niepewne } z odczytu pisma,
  * reczne: ilości wpisane z klawiatury (id pola -> tekst),
- * dodatkowe: [{ nazwa, ilosc }] - pozycje dopisane.
+ * dodatkowe: [{ nazwa, ilosc }] - pozycje dopisane, ekipa - z nagłówka zestawu.
  */
-export function wierszeMaterialowki({ pola, odczyt, reczne = {}, dodatkowe = [], adres, zestaw, zapisano, zatwierdzono }) {
+export function wierszeMaterialowki({ pola, odczyt, reczne = {}, dodatkowe = [], adres, zestaw, ekipa = '', zapisano, zatwierdzono }) {
   const niepewne = odczyt?.niepewne || [];
   const wiersz = (towar, ilosc, zestawWiersza, sprawdzic) => {
     const liczba = wartoscKomorki(ilosc);
@@ -282,6 +282,7 @@ export function wierszeMaterialowki({ pola, odczyt, reczne = {}, dodatkowe = [],
       towar,
       liczba,
       zestaw: zestawWiersza,
+      ekipa: String(ekipa ?? '').trim(),
       'data zapisania': dataCzytelna(zapisano),
       'data zatwierdzenia': dataCzytelna(zatwierdzono),
       'do sprawdzenia': sprawdzic ? 'tak' : ''
@@ -405,12 +406,17 @@ export function wyczyscWydanie({ arkusz, wiersze, nrWiersza, poprzednia }) {
   return { dane: [{ range: `'${arkusz.replace(/'/g, "''")}'!${kolumnaA1(k.zapis)}${nrWiersza}`, values: [[wartosc]] }], kolumna: k.zapis, wartosc };
 }
 
-// Ekipa z kolumny „Ekipa…” w wierszu adresu tabeli montażowej.
+// Ekipa z wiersza adresu tabeli montażowej: kolumna „Ekipa…”, a gdy pusta -
+// „monter” (w arkuszach pomp biuro wpisuje ekipę raz tu, raz tu, np. Słupca
+// ma wypełnionego tylko „montera”). Bez „uwagi ekipy”, „email ekipa” i #N/A.
 export function ekipaZMontazowej(wiersze, nrWiersza) {
   const naglowek = znajdzNaglowek(wiersze);
   if (!naglowek) return '';
-  const i = (wiersze[naglowek.wiersz] || []).map(normalizuj).findIndex(n => /^\s*ekip/.test(n));
-  return i === -1 ? '' : String(wiersze[nrWiersza - 1]?.[i] ?? '').trim();
+  const nazwy = (wiersze[naglowek.wiersz] || []).map(normalizuj);
+  const kolumny = [/^ekip/, /^monter/].flatMap(wzor => nazwy.flatMap((n, i) => (wzor.test(n) ? [i] : [])));
+  const w = wiersze[nrWiersza - 1] || [];
+  // „Ekipy PC” w Zagórowie to podtytuł wpisany w kolumnę, nie ekipa.
+  return kolumny.map(i => String(w[i] ?? '').trim()).find(v => v && !v.startsWith('#') && !/^ekipy\b/i.test(v)) || '';
 }
 
 // Stan materiałówki z wiersza adresu: { wydano, zakonczono, maKolumneZatwierdzenia }

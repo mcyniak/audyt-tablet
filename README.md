@@ -141,8 +141,8 @@ magazynu: inwestycja → rodzaj instalacji (segmenty nad listą, bez „Wszystki
   „Nazwa” (i „Materiał”), także na kolejnych stronach bez powtórzonego
   nagłówka, do linii „Podpis…”. Pozycja = nazwa, materiał, l.p. i ilość
   wydrukowana w kolumnie na prawo od „Materiał”; zawinięta nazwa (linie bliżej
-  niż 7 pt) to jedna pozycja. Nad tabelą: „Ekipa” (z kolumny „Ekipa…”
-  tabeli montażowej, gdy jest; można zmienić), „Data” i „Adres montażu”
+  niż 7 pt) to jedna pozycja. Nad tabelą: „Ekipa” (z wiersza adresu tabeli
+  montażowej: kolumna „Ekipa…”, a gdy pusta – „monter”; można zmienić), „Data” i „Adres montażu”
   (wpisują się same).
 - **Drugi układ zestawu** (np. zestawy PV): bez „Nazwa/Materiał”, z kolumnami
   „jedn.” i pustą „Ile pozostało [szt.]”. Pozycja = linia z jednostką (szt,
@@ -182,8 +182,8 @@ magazynu: inwestycja → rodzaj instalacji (segmenty nad listą, bez „Wszystki
 - **PDF** do `<…Materiałówki>/<PC|PV>/<adres>/<adres>_<zestaw>.pdf`.
 - **Arkusz „Materiałówka”** (w folderze rodzaju albo w folderze materiałówek;
   brak – zakładany w folderze rodzaju), zakładka o nazwie rodzaju („PC”/„PV”):
-  adres, towar, liczba, zestaw, data zapisania, data zatwierdzenia, do
-  sprawdzenia. Kolumny po nagłówku, brakujące dopisywane. Ponowny zapis
+  adres, towar, liczba, zestaw, ekipa, data zapisania, data zatwierdzenia,
+  do sprawdzenia. Kolumny po nagłówku, brakujące dopisywane. Ponowny zapis
   zastępuje wiersze tego adresu (nowe dopisywane, stare usuwane).
 - **Tabela montażowa**, wiersz adresu (arkusz rodzaju): data zapisu do kolumny
   z „wydania” w nagłówku („data wydania materiału” – T w pompach, „wydania

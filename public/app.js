@@ -1750,7 +1750,7 @@ async function wpiszWniosek(rekord) {
     }
     await zapiszMaterialowke(mat.tabela.id, rodzaj, {
       adres: rekord.adres,
-      nowe: wierszeMaterialowki({ pola: rekord.pola || [], odczyt, reczne: rekord.wartosci, dodatkowe: rekord.dodatkowe, adres: rekord.adres, zestaw: bezPdf(rekord.zestaw), zapisano: rekord.zmieniono, zatwierdzono: rekord.zatwierdzono })
+      nowe: wierszeMaterialowki({ pola: rekord.pola || [], odczyt, reczne: rekord.wartosci, dodatkowe: rekord.dodatkowe, adres: rekord.adres, zestaw: bezPdf(rekord.zestaw), ekipa: rekord.wartosci?.ekipa, zapisano: rekord.zmieniono, zatwierdzono: rekord.zatwierdzono })
     });
   } catch (blad) {
     if (blad.status === 403) throw new Error('to konto nie może edytować arkusza „Materiałówka” – biuro musi dać uprawnienia „Edytujący”');
